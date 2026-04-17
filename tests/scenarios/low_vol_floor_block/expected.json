@@ -1,0 +1,6 @@
+{
+  "action": "stand_aside",
+  "allowed": false,
+  "plan_present": false,
+  "required_reasons": ["low_vol_floor"]
+}

@@ -1,0 +1,6 @@
+{
+  "action": "arm_long_stop",
+  "allowed": true,
+  "plan_present": true,
+  "required_reasons": []
+}

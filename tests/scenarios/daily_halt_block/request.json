@@ -1,0 +1,53 @@
+{
+  "candles_15m": [
+    {"close_time": 1744676100000, "open": 79975.0, "high": 80120.0, "low": 79855.0, "close": 80000.0, "volume": 100.0, "buy_volume": 65.0, "sell_volume": 35.0, "delta": null},
+    {"close_time": 1744677000000, "open": 80035.0, "high": 80180.0, "low": 79915.0, "close": 80060.0, "volume": 101.0, "buy_volume": 65.5, "sell_volume": 35.3, "delta": null},
+    {"close_time": 1744677900000, "open": 80095.0, "high": 80240.0, "low": 79975.0, "close": 80120.0, "volume": 102.0, "buy_volume": 66.0, "sell_volume": 35.6, "delta": null},
+    {"close_time": 1744678800000, "open": 80155.0, "high": 80300.0, "low": 80035.0, "close": 80180.0, "volume": 103.0, "buy_volume": 66.5, "sell_volume": 35.9, "delta": null},
+    {"close_time": 1744679700000, "open": 80215.0, "high": 80360.0, "low": 80095.0, "close": 80240.0, "volume": 104.0, "buy_volume": 67.0, "sell_volume": 36.2, "delta": null},
+    {"close_time": 1744680600000, "open": 80275.0, "high": 80420.0, "low": 80155.0, "close": 80300.0, "volume": 105.0, "buy_volume": 67.5, "sell_volume": 36.5, "delta": null},
+    {"close_time": 1744681500000, "open": 80335.0, "high": 80480.0, "low": 80215.0, "close": 80360.0, "volume": 106.0, "buy_volume": 68.0, "sell_volume": 36.8, "delta": null},
+    {"close_time": 1744682400000, "open": 80395.0, "high": 80540.0, "low": 80275.0, "close": 80420.0, "volume": 107.0, "buy_volume": 68.5, "sell_volume": 37.1, "delta": null},
+    {"close_time": 1744683300000, "open": 80455.0, "high": 80600.0, "low": 80335.0, "close": 80480.0, "volume": 108.0, "buy_volume": 69.0, "sell_volume": 37.4, "delta": null},
+    {"close_time": 1744684200000, "open": 80515.0, "high": 80660.0, "low": 80395.0, "close": 80540.0, "volume": 109.0, "buy_volume": 69.5, "sell_volume": 37.7, "delta": null},
+    {"close_time": 1744685100000, "open": 80575.0, "high": 80720.0, "low": 80455.0, "close": 80600.0, "volume": 110.0, "buy_volume": 70.0, "sell_volume": 38.0, "delta": null},
+    {"close_time": 1744686000000, "open": 80635.0, "high": 80780.0, "low": 80515.0, "close": 80660.0, "volume": 111.0, "buy_volume": 70.5, "sell_volume": 38.3, "delta": null},
+    {"close_time": 1744686900000, "open": 80695.0, "high": 80840.0, "low": 80575.0, "close": 80720.0, "volume": 112.0, "buy_volume": 71.0, "sell_volume": 38.6, "delta": null},
+    {"close_time": 1744687800000, "open": 80755.0, "high": 80900.0, "low": 80635.0, "close": 80780.0, "volume": 113.0, "buy_volume": 71.5, "sell_volume": 38.9, "delta": null},
+    {"close_time": 1744688700000, "open": 80815.0, "high": 80960.0, "low": 80695.0, "close": 80840.0, "volume": 114.0, "buy_volume": 72.0, "sell_volume": 39.2, "delta": null},
+    {"close_time": 1744689600000, "open": 80875.0, "high": 81020.0, "low": 80755.0, "close": 80900.0, "volume": 115.0, "buy_volume": 72.5, "sell_volume": 39.5, "delta": null},
+    {"close_time": 1744690500000, "open": 80935.0, "high": 81080.0, "low": 80815.0, "close": 80960.0, "volume": 116.0, "buy_volume": 73.0, "sell_volume": 39.8, "delta": null},
+    {"close_time": 1744691400000, "open": 80995.0, "high": 81140.0, "low": 80875.0, "close": 81020.0, "volume": 117.0, "buy_volume": 73.5, "sell_volume": 40.1, "delta": null},
+    {"close_time": 1744692300000, "open": 81055.0, "high": 81200.0, "low": 80935.0, "close": 81080.0, "volume": 118.0, "buy_volume": 74.0, "sell_volume": 40.4, "delta": null},
+    {"close_time": 1744693200000, "open": 81115.0, "high": 81260.0, "low": 80995.0, "close": 81140.0, "volume": 119.0, "buy_volume": 74.5, "sell_volume": 40.7, "delta": null},
+    {"close_time": 1744694100000, "open": 81175.0, "high": 81320.0, "low": 81055.0, "close": 81200.0, "volume": 120.0, "buy_volume": 75.0, "sell_volume": 41.0, "delta": null},
+    {"close_time": 1744695000000, "open": 81235.0, "high": 81380.0, "low": 81115.0, "close": 81260.0, "volume": 121.0, "buy_volume": 75.5, "sell_volume": 41.3, "delta": null},
+    {"close_time": 1744695900000, "open": 81295.0, "high": 81440.0, "low": 81175.0, "close": 81320.0, "volume": 122.0, "buy_volume": 76.0, "sell_volume": 41.6, "delta": null},
+    {"close_time": 1744696800000, "open": 81355.0, "high": 81500.0, "low": 81235.0, "close": 81380.0, "volume": 123.0, "buy_volume": 76.5, "sell_volume": 41.9, "delta": null},
+    {"close_time": 1744697700000, "open": 81415.0, "high": 81560.0, "low": 81295.0, "close": 81440.0, "volume": 124.0, "buy_volume": 77.0, "sell_volume": 42.2, "delta": null},
+    {"close_time": 1744698600000, "open": 81475.0, "high": 81620.0, "low": 81355.0, "close": 81500.0, "volume": 125.0, "buy_volume": 77.5, "sell_volume": 42.5, "delta": null},
+    {"close_time": 1744699500000, "open": 81535.0, "high": 81680.0, "low": 81415.0, "close": 81560.0, "volume": 126.0, "buy_volume": 78.0, "sell_volume": 42.8, "delta": null},
+    {"close_time": 1744700400000, "open": 81595.0, "high": 81740.0, "low": 81475.0, "close": 81620.0, "volume": 127.0, "buy_volume": 78.5, "sell_volume": 43.1, "delta": null},
+    {"close_time": 1744701300000, "open": 81655.0, "high": 81800.0, "low": 81535.0, "close": 81680.0, "volume": 128.0, "buy_volume": 79.0, "sell_volume": 43.4, "delta": null},
+    {"close_time": 1744702200000, "open": 81715.0, "high": 81860.0, "low": 81595.0, "close": 81740.0, "volume": 129.0, "buy_volume": 79.5, "sell_volume": 43.7, "delta": null},
+    {"close_time": 1744703100000, "open": 81775.0, "high": 81920.0, "low": 81655.0, "close": 81800.0, "volume": 130.0, "buy_volume": 80.0, "sell_volume": 44.0, "delta": null},
+    {"close_time": 1744704000000, "open": 81845.0, "high": 81960.0, "low": 81640.0, "close": 81860.0, "volume": 131.0, "buy_volume": 80.5, "sell_volume": 44.3, "delta": null}
+  ],
+  "macro_events": [],
+  "runtime_state": {
+    "realized_net_r_today": -2.1,
+    "halt_new_entries_flag": 0
+  },
+  "account_equity": 100000.0,
+  "symbol_filters": {
+    "tick_size": 0.1,
+    "lot_step": 0.001
+  },
+  "rustyfish_overlay": {
+    "report_timestamp_ms": 1744682400000,
+    "trend_bias": 0.2,
+    "chop_bias": 0.0,
+    "vol_bias": 0.0,
+    "conviction": 0.6
+  }
+}
