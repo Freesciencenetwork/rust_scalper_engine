@@ -1,0 +1,21 @@
+# Engine / backtest follow-up (2026-04-18)
+
+## What we measured
+Five Python strategies called POST /v1/evaluate with rolling ~1000-bar windows + config_overrides, then simulated stop/target on subsequent bars. Numbers you saw: baseline ~40% win rate, PF ~1.14; looser configs → more trades, worse expectancy.
+
+## Main conclusion: not “broken”, ~zero edge at default R:R
+- Default plan: stop = trigger − 2×ATR, target = trigger + 3×ATR (see build_position_plan).
+- Breakeven win rate for binary +1.5R / −1R outcomes is 1/(1+1.5) = 40%.
+- Baseline 40.1% win rate is exactly on that knife-edge; small positive total R/PF is noise vs fees/slippage and fill assumptions.
+
+## Why relaxing gates hurt (strategies 2–5)
+- failed_acceptance still blocks most bars when it fires; other gates were never the only bottleneck for long-run edge.
+- Lower vol floor / shorter lookbacks / wider targets increase sample size but admit worse trade population → lower win%, negative avg R (especially 3: wider target needs higher win% — math demands ~27%+ for 1.5 stop / 4 target; you saw ~25%).
+
+## Real code issues / mismatches (worth fixing or documenting)
+1) no_runway uses stop_atr_multiple to require clearance, but profit target uses target_atr_multiple — resistance can sit between 2× and 3× ATR and still pass the gate (src/strategy/gates/no_runway.rs).
+2) Stateless evaluate: each request builds a new StrategyEngine; failed_acceptance is replayed only over failed_acceptance_lookback_bars inside that window (src/machine.rs). Harness must not assume cross-request latch unless runtime_state is extended.
+3) Backtest harness risks: intra-bar stop vs target ordering, entry fill model (stop above high), overlapping signals if not deduped — any of these can bias R.
+
+## If goal is >60% win rate
+Not compatible with default 2:3 ATR R:R without cutting winners short or asymmetric exits; need different product spec (partial exits, trail, mean-reversion TP, etc.) or accept lower win% with positive expectancy at portfolio level.
