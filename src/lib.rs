@@ -9,6 +9,6 @@ pub mod strategy;
 pub use config::StrategyConfig;
 pub use domain::{Candle, MacroEvent, SymbolFilters};
 pub use machine::{
-    DecisionMachine, MachineAction, MachineCapabilities, MachineDiagnostics, MachineRequest,
-    MachineResponse, RuntimeState,
+    ConfigOverrides, DecisionMachine, MachineAction, MachineCapabilities, MachineDiagnostics,
+    MachineRequest, MachineResponse, RuntimeState,
 };

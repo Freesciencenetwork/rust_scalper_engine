@@ -1,3 +1,4 @@
+use crate::config::StrategyConfig;
 use crate::strategy::data::PreparedDataset;
 use crate::strategy::state::FailedAcceptanceState;
 
@@ -5,12 +6,12 @@ pub fn update(
     state: &mut FailedAcceptanceState,
     index: usize,
     dataset: &PreparedDataset,
-    breakout_lookback: usize,
+    config: &StrategyConfig,
 ) {
-    if index < breakout_lookback {
+    if index < config.breakout_lookback {
         return;
     }
-    let start = index - breakout_lookback;
+    let start = index - config.breakout_lookback;
     let breakout_level = dataset.frames_15m[start..index]
         .iter()
         .map(|frame| frame.candle.high)

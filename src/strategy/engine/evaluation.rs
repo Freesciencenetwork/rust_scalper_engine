@@ -109,7 +109,7 @@ impl StrategyEngine {
             &mut self.failed_acceptance,
             index,
             dataset,
-            self.config.breakout_lookback,
+            &self.config,
         );
     }
 }

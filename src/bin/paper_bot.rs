@@ -100,6 +100,7 @@ async fn main() -> Result<()> {
             account_equity: Some(equity_for_sizing),
             symbol_filters: Some(filters.clone()),
             rustyfish_overlay: None,
+            config_overrides: None,
         };
 
         let response = machine

@@ -18,6 +18,11 @@ pub struct StrategyConfig {
     pub trend_confirm_bars: usize,
     pub breakout_lookback: usize,
     pub runway_lookback: usize,
+    /// How far back (in bars) the failed-acceptance gate replays history to build
+    /// its state. Keeping this short (default 96 = 24h) prevents a single old
+    /// failed breakout from silencing the engine for the entire 1000-bar window.
+    /// Must be > breakout_lookback to give the gate enough history to detect a breakout.
+    pub failed_acceptance_lookback_bars: usize,
     pub stop_atr_multiple: f64,
     pub target_atr_multiple: f64,
     pub low_vol_enabled: bool,
@@ -40,6 +45,7 @@ impl Default for StrategyConfig {
             trend_confirm_bars: 3,
             breakout_lookback: 20,
             runway_lookback: 40,
+            failed_acceptance_lookback_bars: 96,
             stop_atr_multiple: 2.0,
             target_atr_multiple: 3.0,
             low_vol_enabled: true,

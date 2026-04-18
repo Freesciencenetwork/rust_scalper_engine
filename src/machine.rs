@@ -28,6 +28,23 @@ pub struct MachineRequest {
     pub account_equity: Option<f64>,
     pub symbol_filters: Option<SymbolFilters>,
     pub rustyfish_overlay: Option<RustyFishDailyReport>,
+    #[serde(default)]
+    pub config_overrides: Option<ConfigOverrides>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ConfigOverrides {
+    pub min_target_move_pct: Option<f64>,
+    pub stop_atr_multiple: Option<f64>,
+    pub target_atr_multiple: Option<f64>,
+    pub runway_lookback: Option<usize>,
+    pub ema_fast_period: Option<usize>,
+    pub ema_slow_period: Option<usize>,
+    pub low_vol_enabled: Option<bool>,
+    pub high_vol_ratio: Option<f64>,
+    pub breakout_lookback: Option<usize>,
+    pub failed_acceptance_lookback_bars: Option<usize>,
+    pub trend_confirm_bars: Option<usize>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -102,6 +119,20 @@ impl DecisionMachine {
             config = config.with_symbol_filters(filters);
         }
 
+        if let Some(ov) = &request.config_overrides {
+            if let Some(v) = ov.min_target_move_pct { config.min_target_move_pct = v; }
+            if let Some(v) = ov.stop_atr_multiple { config.stop_atr_multiple = v; }
+            if let Some(v) = ov.target_atr_multiple { config.target_atr_multiple = v; }
+            if let Some(v) = ov.runway_lookback { config.runway_lookback = v; }
+            if let Some(v) = ov.ema_fast_period { config.ema_fast_period = v; }
+            if let Some(v) = ov.ema_slow_period { config.ema_slow_period = v; }
+            if let Some(v) = ov.low_vol_enabled { config.low_vol_enabled = v; }
+            if let Some(v) = ov.high_vol_ratio { config.high_vol_ratio = v; }
+            if let Some(v) = ov.breakout_lookback { config.breakout_lookback = v; }
+            if let Some(v) = ov.failed_acceptance_lookback_bars { config.failed_acceptance_lookback_bars = v; }
+            if let Some(v) = ov.trend_confirm_bars { config.trend_confirm_bars = v; }
+        }
+
         let overlay = request
             .rustyfish_overlay
             .as_ref()
@@ -124,7 +155,12 @@ impl DecisionMachine {
             engine.system_mode = SystemMode::Halted;
         }
 
-        for frame_index in 0..=index {
+        // Only replay the recent window for failed-acceptance state. Replaying
+        // the full 1000-bar history causes a single old failed breakout to latch
+        // the gate for the remainder of the window. Using a short lookback keeps
+        // the gate responsive to *recent* price structure only.
+        let fa_start = index.saturating_sub(config.failed_acceptance_lookback_bars);
+        for frame_index in fa_start..=index {
             engine.update_failed_acceptance(frame_index, &dataset);
         }
 
@@ -218,6 +254,7 @@ mod tests {
             account_equity: Some(100_000.0),
             symbol_filters: None,
             rustyfish_overlay: None,
+            config_overrides: None,
         };
 
         let result = machine.evaluate(request);
@@ -242,6 +279,7 @@ mod tests {
             account_equity: Some(100_000.0),
             symbol_filters: None,
             rustyfish_overlay: None,
+            config_overrides: None,
         };
 
         let response = machine
@@ -298,6 +336,7 @@ mod tests {
             account_equity: Some(100_000.0),
             symbol_filters: None,
             rustyfish_overlay: None,
+            config_overrides: None,
         };
 
         let request_json = serde_json::to_string(&request).expect("serialize request");

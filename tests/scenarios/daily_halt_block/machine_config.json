@@ -13,6 +13,7 @@
   "trend_confirm_bars": 3,
   "breakout_lookback": 8,
   "runway_lookback": 12,
+  "failed_acceptance_lookback_bars": 96,
   "stop_atr_multiple": 2.0,
   "target_atr_multiple": 3.0,
   "low_vol_enabled": true
