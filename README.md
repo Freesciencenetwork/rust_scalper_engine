@@ -6,7 +6,7 @@ The crate is intentionally a thinking machine:
 
 - normalized market/context data goes in
 - algorithmic decision output comes out
-- no broker connectivity inside `DecisionMachine` (optional `binance-fetch` CLI reads public Spot data only)
+- no broker connectivity inside `DecisionMachine` (optional `binance-fetch` binary in workspace crate `binance_spot_candles` reads public Spot data only)
 - no order execution
 - no backtest runner
 - no file-based runtime contract in the core API
@@ -43,9 +43,9 @@ Invalid JSON returns **422**. Evaluation errors (e.g. insufficient history) retu
 
 ## Binance data CLI (`binance-fetch`)
 
-Read-only calls to **Binance Spot** REST (no API keys). Uses `reqwest` with **rustls**.
+Read-only calls to **Binance Spot** REST (no API keys). Implemented in workspace crate **`binance_spot_candles`** (this is the only package intended for **`cargo publish`** to crates.io; the root `binance_BTC` crate has `publish = false`).
 
-- **Run:** `cargo run --bin binance-fetch -- <subcommand> [options]`
+- **Run:** `cargo run -p binance_spot_candles --bin binance-fetch -- <subcommand> [options]`
 
 **`klines`** — downloads [`GET /api/v3/klines`](https://developers.binance.com/docs/binance-spot-api-docs/rest-api/market-data-endpoints#klinecandlestick-data) and prints a **`MachineRequest` JSON** (minimal fields: `candles_15m` filled, rest empty / null). Pipe or save and merge with `symbol_filters` / `account_equity` before `POST /v1/evaluate` if needed.
 
@@ -56,16 +56,18 @@ Read-only calls to **Binance Spot** REST (no API keys). Uses `reqwest` with **ru
 Example:
 
 ```bash
-cargo run --bin binance-fetch -- klines --symbol BTCUSDT --interval 15m --limit 1000 > request.json
+cargo run -p binance_spot_candles --bin binance-fetch -- klines --symbol BTCUSDT --interval 15m --limit 1000 > request.json
 ```
 
 **`symbol-filters`** — fetches `exchangeInfo` and prints **`symbol_filters`** JSON (`tick_size`, `lot_step`) for `--symbol`.
 
 ```bash
-cargo run --bin binance-fetch -- symbol-filters --symbol BTCUSDT
+cargo run -p binance_spot_candles --bin binance-fetch -- symbol-filters --symbol BTCUSDT
 ```
 
-Library helpers live in [`src/adapters/binance/klines_rest.rs`](src/adapters/binance/klines_rest.rs) (`fetch_klines`, `parse_klines_json`).
+**Publish only Binance candles to crates.io:** from the repo root, `cargo publish -p binance_spot_candles` (never `cargo publish` without `-p`, or you would try to publish the root engine, which is disabled).
+
+Library helpers live in [`crates/binance_spot_candles/src/adapters/binance/klines_rest.rs`](crates/binance_spot_candles/src/adapters/binance/klines_rest.rs) (`fetch_klines`, `parse_klines_json`). The root crate re-exports them under `binance_BTC::adapters::binance`.
 
 ## What “normalized” means
 
@@ -668,10 +670,10 @@ Context:
 
 Input adapters:
 
-- `src/adapters/binance/kline_csv.rs`  
+- [`crates/binance_spot_candles/src/adapters/binance/kline_csv.rs`](crates/binance_spot_candles/src/adapters/binance/kline_csv.rs)  
   Parses Binance kline CSV payloads from strings into normalized candles.
 
-- `src/adapters/binance/exchange_info.rs`  
+- [`crates/binance_spot_candles/src/adapters/binance/exchange_info.rs`](crates/binance_spot_candles/src/adapters/binance/exchange_info.rs)  
   Parses Binance `exchangeInfo` JSON payloads from strings into symbol filters.
 
 ## What was removed

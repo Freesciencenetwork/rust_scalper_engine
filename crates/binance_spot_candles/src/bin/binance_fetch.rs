@@ -1,19 +1,17 @@
 //! CLI: pull Spot market data from Binance (klines + symbol filters).
 
 use anyhow::{Context, Result};
-use binance_BTC::adapters::binance::{
+use binance_spot_candles::adapters::binance::{
     BinanceExchangeInfoAdapter, fetch_klines, http_client,
 };
-use binance_BTC::adapters::traits::SymbolMetadataAdapter;
-use binance_BTC::{MachineRequest, RuntimeState};
+use binance_spot_candles::adapters::traits::SymbolMetadataAdapter;
 use clap::{Parser, Subcommand};
 
 const DEFAULT_BASE: &str = "https://api.binance.com";
 
 #[derive(Parser)]
-#[command(name = "binance-fetch", version, about = "Fetch Binance Spot data for the decision machine")]
+#[command(name = "binance-fetch", version, about = "Fetch Binance Spot klines / exchangeInfo")]
 struct Cli {
-    /// Binance Spot REST root (no trailing slash), e.g. https://testnet.binance.vision for spot testnet
     #[arg(long, default_value = DEFAULT_BASE)]
     base_url: String,
 
@@ -23,13 +21,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Download klines and print a JSON `MachineRequest` body (ready for `POST /v1/evaluate`).
+    /// Download klines and print JSON shaped like a `MachineRequest` body (for `POST /v1/evaluate`).
     Klines {
         #[arg(long, default_value = "BTCUSDT")]
         symbol: String,
         #[arg(long, default_value = "15m")]
         interval: String,
-        /// Binance allows at most 1000 klines per request
         #[arg(long, default_value_t = 1000)]
         limit: u16,
         #[arg(long)]
@@ -37,7 +34,6 @@ enum Command {
         #[arg(long)]
         end_time: Option<i64>,
     },
-    /// Fetch `exchangeInfo` and print `symbol_filters` JSON for the symbol
     SymbolFilters {
         #[arg(long, default_value = "BTCUSDT")]
         symbol: String,
@@ -71,18 +67,23 @@ async fn main() -> Result<()> {
             )
             .await?;
 
-            let request = MachineRequest {
-                candles_15m: candles,
-                macro_events: Vec::new(),
-                runtime_state: RuntimeState::default(),
-                account_equity: None,
-                symbol_filters: None,
-                rustyfish_overlay: None,
-            };
+            let candles_value =
+                serde_json::to_value(&candles).context("serialize candles_15m")?;
+            let request = serde_json::json!({
+                "candles_15m": candles_value,
+                "macro_events": [],
+                "runtime_state": {
+                    "realized_net_r_today": 0.0,
+                    "halt_new_entries_flag": 0
+                },
+                "account_equity": serde_json::Value::Null,
+                "symbol_filters": serde_json::Value::Null,
+                "rustyfish_overlay": serde_json::Value::Null,
+            });
 
             println!(
                 "{}",
-                serde_json::to_string_pretty(&request).context("serialize MachineRequest")?
+                serde_json::to_string_pretty(&request).context("serialize request JSON")?
             );
         }
         Command::SymbolFilters { symbol } => {

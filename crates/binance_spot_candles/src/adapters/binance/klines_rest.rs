@@ -133,7 +133,6 @@ mod tests {
 
     #[test]
     fn parses_binance_kline_json_row() {
-        // Field order per Binance Spot `GET /api/v3/klines` documentation.
         let payload = r#"[[1499040000000,"0.01634702","0.80000000","0.01575800","0.01577100","148976.11427815",1499644799999,"2434.19055334",308,"1756.87402397","28.46694399","17928899.62484339"]]"#;
         let candles = parse_klines_json(payload).expect("parse");
         assert_eq!(candles.len(), 1);

@@ -1,20 +1,23 @@
+[workspace]
+members = [".", "crates/binance_spot_candles"]
+resolver = "2"
+
 [package]
 name = "binance_BTC"
 version = "0.1.0"
 edition = "2024"
-description = "Binance Spot public REST: fetch klines and exchangeInfo, normalize candles and symbol filters; includes a small fetch CLI."
+description = "BTC 15m continuation decision machine and optional HTTP API (workspace root; not published to crates.io)."
 readme = "README.md"
 repository = "https://github.com/Freesciencenetwork/rust_scalper_engine"
 license = "MIT"
+publish = false
 default-run = "server"
 
 [dependencies]
+binance_spot_candles = { path = "crates/binance_spot_candles" }
 anyhow = "1.0"
 axum = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
-clap = { version = "4", features = ["derive"] }
-csv = "1.4"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
@@ -25,7 +28,3 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [[bin]]
 name = "server"
 path = "src/bin/server.rs"
-
-[[bin]]
-name = "binance-fetch"
-path = "src/bin/binance_fetch.rs"

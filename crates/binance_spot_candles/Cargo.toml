@@ -1,0 +1,23 @@
+[package]
+name = "binance_spot_candles"
+version = "0.1.0"
+edition = "2024"
+description = "Binance Spot public REST: fetch klines and exchangeInfo, normalize OHLCV candles and symbol filters."
+readme = "README.md"
+repository = "https://github.com/Freesciencenetwork/rust_scalper_engine"
+license = "MIT"
+default-run = "binance-fetch"
+
+[dependencies]
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+csv = "1.4"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[[bin]]
+name = "binance-fetch"
+path = "src/bin/binance_fetch.rs"
