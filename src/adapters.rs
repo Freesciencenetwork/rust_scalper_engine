@@ -1,4 +1,4 @@
-//! Binance Spot adapters live in workspace crate [`binance_spot_candles`](https://github.com/Freesciencenetwork/rust_scalper_engine/tree/main/crates/binance_spot_candles) (the publishable piece).
+//! Binance Spot adapters come from the **`binance_spot_candles`** crate on [crates.io](https://crates.io/crates/binance_spot_candles) (version pinned in `Cargo.toml`).
 
 pub mod binance {
     pub use binance_spot_candles::adapters::binance::*;

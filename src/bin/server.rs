@@ -8,7 +8,7 @@ use axum::{
     Json, Router,
 };
 use binance_BTC::{
-    DecisionMachine, MachineCapabilities, MachineRequest, MachineResponse,
+    DecisionMachine, MachineCapabilities, MachineRequest, MachineResponse, StrategyConfig,
 };
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -25,7 +25,7 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|value| value.parse().ok())
         .unwrap_or(8080);
 
-    let machine = Arc::new(DecisionMachine::default());
+    let machine = Arc::new(machine_from_env());
 
     let app = Router::new()
         .route("/health", get(health))
@@ -38,6 +38,32 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(%port, "listening");
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+fn machine_from_env() -> DecisionMachine {
+    let mut config = StrategyConfig::default();
+    if let Ok(raw) = std::env::var("VOL_BASELINE_LOOKBACK_BARS") {
+        if let Ok(n) = raw.parse::<usize>() {
+            let min = config
+                .vwma_lookback
+                .max(config.runway_lookback)
+                .max(2);
+            if n >= min {
+                config.vol_baseline_lookback_bars = n;
+                tracing::info!(
+                    vol_baseline_lookback_bars = n,
+                    "VOL_BASELINE_LOOKBACK_BARS override applied"
+                );
+            } else {
+                tracing::warn!(
+                    value = n,
+                    min,
+                    "VOL_BASELINE_LOOKBACK_BARS ignored (must be >= vwma_lookback and runway_lookback)"
+                );
+            }
+        }
+    }
+    DecisionMachine::new(config)
 }
 
 async fn health() -> &'static str {

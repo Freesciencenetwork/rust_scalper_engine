@@ -154,6 +154,8 @@ dependencies = [
  "axum",
  "binance_spot_candles",
  "chrono",
+ "clap",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",
@@ -165,6 +167,8 @@ dependencies = [
 [[package]]
 name = "binance_spot_candles"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5009b96dabb8171e24655473aaf19e41f05beec407bcdc38ebf933f51793595"
 dependencies = [
  "anyhow",
  "chrono",
