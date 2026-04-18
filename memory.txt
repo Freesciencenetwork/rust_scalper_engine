@@ -13,7 +13,7 @@ Five Python strategies called POST /v1/evaluate with rolling ~1000-bar windows +
 - Lower vol floor / shorter lookbacks / wider targets increase sample size but admit worse trade population → lower win%, negative avg R (especially 3: wider target needs higher win% — math demands ~27%+ for 1.5 stop / 4 target; you saw ~25%).
 
 ## Real code issues / mismatches (worth fixing or documenting)
-1) no_runway uses stop_atr_multiple to require clearance, but profit target uses target_atr_multiple — resistance can sit between 2× and 3× ATR and still pass the gate (src/strategy/gates/no_runway.rs).
+1) no_runway uses stop_atr_multiple to require clearance, but profit target uses target_atr_multiple — resistance can sit between 2× and 3× ATR and still pass the gate (src/strategies/default/gates/no_runway.rs).
 2) Stateless evaluate: each request builds a new StrategyEngine; failed_acceptance is replayed only over failed_acceptance_lookback_bars inside that window (src/machine.rs). Harness must not assume cross-request latch unless runtime_state is extended.
 3) Backtest harness risks: intra-bar stop vs target ordering, entry fill model (stop above high), overlapping signals if not deduped — any of these can bias R.
 

@@ -1,5 +1,8 @@
 pub fn rolling_median(values: &[f64], lookback: usize) -> Vec<Option<f64>> {
     let mut result = vec![None; values.len()];
+    if lookback == 0 {
+        return result;
+    }
 
     for index in 0..values.len() {
         if index + 1 < lookback {
@@ -18,4 +21,20 @@ pub fn rolling_median(values: &[f64], lookback: usize) -> Vec<Option<f64>> {
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rolling_median;
+
+    #[test]
+    fn returns_none_series_for_zero_lookback() {
+        assert_eq!(rolling_median(&[1.0, 2.0], 0), vec![None, None]);
+    }
+
+    #[test]
+    fn computes_even_window_median() {
+        let median = rolling_median(&[4.0, 1.0, 3.0, 2.0], 4);
+        assert_eq!(median, vec![None, None, None, Some(2.5)]);
+    }
 }

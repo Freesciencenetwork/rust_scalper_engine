@@ -7,8 +7,10 @@ use crate::context::overlay::ParameterOverlay;
 use crate::context::policy::apply_overlay_to_config;
 use crate::context::rustyfish::{RustyFishDailyReport, map_report_to_overlay};
 use crate::domain::{Candle, MacroEvent, SymbolFilters, SystemMode};
+use crate::market_data::{PreparedCandle, PreparedDataset};
+use crate::strategies::strategy_engine_for;
 use crate::strategy::formulas::{PositionPlan, build_position_plan};
-use crate::strategy::{PreparedCandle, PreparedDataset, SignalDecision, StrategyEngine};
+use crate::strategy::SignalDecision;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RuntimeState {
@@ -45,6 +47,11 @@ pub struct ConfigOverrides {
     pub breakout_lookback: Option<usize>,
     pub failed_acceptance_lookback_bars: Option<usize>,
     pub trend_confirm_bars: Option<usize>,
+    pub vp_enabled: Option<bool>,
+    pub vp_lookback_bars: Option<usize>,
+    pub vp_value_area_ratio: Option<f64>,
+    pub vp_bin_count: Option<usize>,
+    pub strategy_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -131,6 +138,11 @@ impl DecisionMachine {
             if let Some(v) = ov.breakout_lookback { config.breakout_lookback = v; }
             if let Some(v) = ov.failed_acceptance_lookback_bars { config.failed_acceptance_lookback_bars = v; }
             if let Some(v) = ov.trend_confirm_bars { config.trend_confirm_bars = v; }
+            if let Some(v) = ov.vp_enabled { config.vp_enabled = v; }
+            if let Some(v) = ov.vp_lookback_bars { config.vp_lookback_bars = v; }
+            if let Some(v) = ov.vp_value_area_ratio { config.vp_value_area_ratio = v; }
+            if let Some(v) = ov.vp_bin_count { config.vp_bin_count = v; }
+            if let Some(v) = ov.strategy_id.clone() { config.strategy_id = v; }
         }
 
         let overlay = request
@@ -148,11 +160,11 @@ impl DecisionMachine {
             .checked_sub(1)
             .ok_or_else(|| anyhow::anyhow!("at least one closed 15m candle is required"))?;
 
-        let mut engine = StrategyEngine::new(config.clone());
+        let mut strategy = strategy_engine_for(&config)?;
         if request.runtime_state.halt_new_entries_flag != 0
             || request.runtime_state.realized_net_r_today <= config.daily_loss_limit_r
         {
-            engine.system_mode = SystemMode::Halted;
+            strategy.set_system_mode(SystemMode::Halted);
         }
 
         // Only replay the recent window for failed-acceptance state. Replaying
@@ -160,11 +172,9 @@ impl DecisionMachine {
         // the gate for the remainder of the window. Using a short lookback keeps
         // the gate responsive to *recent* price structure only.
         let fa_start = index.saturating_sub(config.failed_acceptance_lookback_bars);
-        for frame_index in fa_start..=index {
-            engine.update_failed_acceptance(frame_index, &dataset);
-        }
+        strategy.replay_failed_acceptance_window(fa_start, index, &dataset);
 
-        let decision = engine.evaluate_signal(index, &dataset);
+        let decision = strategy.decide(index, &dataset);
         let plan = build_plan(&config, &decision, request.account_equity);
         let action = if decision.allowed {
             MachineAction::ArmLongStop

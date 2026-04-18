@@ -2,7 +2,7 @@ use binance_BTC::{DecisionMachine, MachineRequest};
 use serde_json::{Value, json};
 
 fn build_mock_request_json(include_macro_event: bool) -> String {
-    let base_close_time_ms = 1_744_873_700_000i64;
+    let base_close_time_ms = 1_744_874_100_000i64;
 
     let candles_15m: Vec<Value> = (0..970)
         .map(|index| {

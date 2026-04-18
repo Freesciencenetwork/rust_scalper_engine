@@ -56,6 +56,11 @@ async fn main() -> Result<()> {
     let min_lookback = config
         .vwma_lookback
         .max(config.runway_lookback)
+        .max(if config.vp_enabled {
+            config.vp_lookback_bars
+        } else {
+            1
+        })
         .max(2);
     let vb = cli.vol_baseline_lookback_bars.max(min_lookback);
     config.vol_baseline_lookback_bars = vb;

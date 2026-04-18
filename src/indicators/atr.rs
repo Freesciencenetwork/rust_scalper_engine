@@ -1,10 +1,9 @@
 use crate::domain::Candle;
 
-use super::ema::ema_series;
-
 pub fn atr_series(candles: &[Candle], period: usize) -> Vec<Option<f64>> {
-    if candles.is_empty() {
-        return Vec::new();
+    let mut result = vec![None; candles.len()];
+    if period == 0 || candles.is_empty() {
+        return result;
     }
 
     let mut true_ranges = Vec::with_capacity(candles.len());
@@ -19,6 +18,58 @@ pub fn atr_series(candles: &[Candle], period: usize) -> Vec<Option<f64>> {
         true_ranges.push(high_low.max(high_close).max(low_close));
     }
 
-    let ema = ema_series(&true_ranges, period);
-    ema.into_iter().map(Some).collect()
+    if candles.len() < period {
+        return result;
+    }
+
+    let first_atr = true_ranges[..period].iter().sum::<f64>() / period as f64;
+    result[period - 1] = Some(first_atr);
+
+    let mut prev_atr = first_atr;
+    for index in period..candles.len() {
+        let atr = (prev_atr * (period - 1) as f64 + true_ranges[index]) / period as f64;
+        result[index] = Some(atr);
+        prev_atr = atr;
+    }
+
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{Duration, TimeZone, Utc};
+
+    use super::atr_series;
+    use crate::domain::Candle;
+
+    fn candle_at(minute: i64, high: f64, low: f64, close: f64) -> Candle {
+        Candle {
+            close_time: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
+                + Duration::minutes(minute),
+            open: close,
+            high,
+            low,
+            close,
+            volume: 1.0,
+            buy_volume: None,
+            sell_volume: None,
+            delta: None,
+        }
+    }
+
+    #[test]
+    fn atr_uses_wilder_smoothing_after_initial_average() {
+        let candles = vec![
+            candle_at(0, 10.0, 8.0, 9.0),
+            candle_at(15, 11.0, 8.0, 10.0),
+            candle_at(30, 13.0, 9.0, 12.0),
+            candle_at(45, 14.0, 10.0, 13.0),
+        ];
+
+        let atr = atr_series(&candles, 3);
+        assert_eq!(atr[0], None);
+        assert_eq!(atr[1], None);
+        assert!((atr[2].expect("initial atr") - 3.0).abs() < 1e-9);
+        assert!((atr[3].expect("smoothed atr") - (10.0 / 3.0)).abs() < 1e-9);
+    }
 }

@@ -2,8 +2,20 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::SymbolFilters;
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VwapAnchorMode {
+    #[default]
+    UtcDay,
+    RollingBars,
+    Disabled,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StrategyConfig {
+    /// Active decision strategy (`"default"` = long-only 15m continuation).
+    #[serde(default = "default_strategy_id")]
+    pub strategy_id: String,
     pub vol_baseline_lookback_bars: usize,
     pub high_vol_ratio: f64,
     pub daily_loss_limit_r: f64,
@@ -26,11 +38,37 @@ pub struct StrategyConfig {
     pub stop_atr_multiple: f64,
     pub target_atr_multiple: f64,
     pub low_vol_enabled: bool,
+    /// When true, long setups require `close >= VAL` of a rolling volume profile.
+    pub vp_enabled: bool,
+    /// Bars rolled into each profile (window ends at the signal bar).
+    pub vp_lookback_bars: usize,
+    /// Fraction of window volume to include in the value area (e.g. `0.7`).
+    pub vp_value_area_ratio: f64,
+    /// Number of price bins across the window’s high–low span.
+    pub vp_bin_count: usize,
+    /// VWAP anchor: UTC calendar day, rolling window, or off.
+    #[serde(default)]
+    pub vwap_anchor_mode: VwapAnchorMode,
+    /// Trailing bar count for `RollingBars` VWAP (ignored for other modes).
+    #[serde(default)]
+    pub vwap_rolling_bars: Option<usize>,
+    /// When false, VWAP at bar *i* excludes bar *i* volume (rare for closed candles).
+    #[serde(default = "default_vwap_include_current_bar")]
+    pub vwap_include_current_bar: bool,
+}
+
+fn default_vwap_include_current_bar() -> bool {
+    true
+}
+
+fn default_strategy_id() -> String {
+    "default".to_string()
 }
 
 impl Default for StrategyConfig {
     fn default() -> Self {
         Self {
+            strategy_id: default_strategy_id(),
             vol_baseline_lookback_bars: 960,
             high_vol_ratio: 1.8,
             daily_loss_limit_r: -2.0,
@@ -49,6 +87,13 @@ impl Default for StrategyConfig {
             stop_atr_multiple: 2.0,
             target_atr_multiple: 3.0,
             low_vol_enabled: true,
+            vp_enabled: true,
+            vp_lookback_bars: 96,
+            vp_value_area_ratio: 0.7,
+            vp_bin_count: 48,
+            vwap_anchor_mode: VwapAnchorMode::UtcDay,
+            vwap_rolling_bars: None,
+            vwap_include_current_bar: true,
         }
     }
 }

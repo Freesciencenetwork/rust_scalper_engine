@@ -24,10 +24,15 @@ pub fn aggregate_15m_to_1h(candles: &[Candle]) -> Result<Vec<Candle>> {
     }
 
     let mut aggregated = Vec::new();
-    for (hour_close, group) in groups {
+    for (hour_close, mut group) in groups {
         if group.len() != 4 {
             continue;
         }
+        group.sort_by_key(|candle| candle.close_time);
+        if !is_complete_hour_group(hour_close, &group) {
+            continue;
+        }
+
         let first = group.first().expect("non-empty group");
         let last = group.last().expect("non-empty group");
         let high = group
@@ -63,6 +68,16 @@ pub fn aggregate_15m_to_1h(candles: &[Candle]) -> Result<Vec<Candle>> {
     }
 
     Ok(aggregated)
+}
+
+fn is_complete_hour_group(hour_close: DateTime<Utc>, group: &[Candle]) -> bool {
+    let expected_offsets = [45_i64, 30, 15, 0];
+    group
+        .iter()
+        .zip(expected_offsets)
+        .all(|(candle, offset_minutes)| {
+            candle.close_time == hour_close - Duration::minutes(offset_minutes)
+        })
 }
 
 fn sum_optional<I>(values: I) -> Option<f64>
@@ -114,5 +129,35 @@ mod tests {
         assert_eq!(aggregated.len(), 1);
         assert_eq!(aggregated[0].close, 103.0);
         assert_eq!(aggregated[0].close_time.hour(), 1);
+    }
+
+    #[test]
+    fn sorts_group_before_aggregating_open_and_close() {
+        let candles = vec![
+            candle_at(45, 102.0),
+            candle_at(15, 100.0),
+            candle_at(60, 103.0),
+            candle_at(30, 101.0),
+        ];
+
+        let aggregated = aggregate_15m_to_1h(&candles).expect("aggregation");
+        assert_eq!(aggregated.len(), 1);
+        assert_eq!(aggregated[0].open, 99.0);
+        assert_eq!(aggregated[0].close, 103.0);
+    }
+
+    #[test]
+    fn skips_groups_with_missing_or_duplicate_quarter_hours() {
+        let candles = vec![
+            candle_at(15, 100.0),
+            candle_at(15, 101.0),
+            candle_at(45, 102.0),
+            candle_at(60, 103.0),
+        ];
+
+        let err = aggregate_15m_to_1h(&candles).expect_err("expected incomplete group rejection");
+        assert!(err
+            .to_string()
+            .contains("unable to derive any complete 1h candles"));
     }
 }

@@ -16,5 +16,9 @@
   "failed_acceptance_lookback_bars": 96,
   "stop_atr_multiple": 2.0,
   "target_atr_multiple": 3.0,
-  "low_vol_enabled": true
+  "low_vol_enabled": true,
+  "vp_enabled": false,
+  "vp_lookback_bars": 16,
+  "vp_value_area_ratio": 0.7,
+  "vp_bin_count": 24
 }
