@@ -81,7 +81,7 @@ impl DecisionMachine {
 
     pub fn capabilities(&self) -> MachineCapabilities {
         MachineCapabilities {
-            machine_name: "btc_continuation_v1_machine".to_string(),
+            machine_name: "binance_BTC_machine".to_string(),
             machine_version: env!("CARGO_PKG_VERSION").to_string(),
             execution_enabled: false,
             supported_actions: vec!["stand_aside".to_string(), "arm_long_stop".to_string()],

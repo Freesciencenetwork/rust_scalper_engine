@@ -1,4 +1,4 @@
-use btc_continuation_v1::{DecisionMachine, MachineRequest};
+use binance_BTC::{DecisionMachine, MachineRequest};
 use serde_json::{Value, json};
 
 fn build_mock_request_json(include_macro_event: bool) -> String {

@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use btc_continuation_v1::{DecisionMachine, MachineAction, MachineRequest, StrategyConfig};
+use binance_BTC::{DecisionMachine, MachineAction, MachineRequest, StrategyConfig};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]

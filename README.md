@@ -1,12 +1,12 @@
 # rust_scalper_engine
 
-Pure Rust decision module for the BTC `15m` long-only continuation strategy. The Rust package name in `Cargo.toml` is `btc_continuation_v1`.
+Pure Rust decision module for the BTC `15m` long-only continuation strategy. The Rust package name in `Cargo.toml` is `binance_BTC`.
 
 The crate is intentionally a thinking machine:
 
 - normalized market/context data goes in
 - algorithmic decision output comes out
-- no broker connectivity
+- no broker connectivity inside `DecisionMachine` (optional `binance-fetch` CLI reads public Spot data only)
 - no order execution
 - no backtest runner
 - no file-based runtime contract in the core API
@@ -24,6 +24,48 @@ The canonical JSON in/out contract is documented under [Machine schema](#machine
 - optional symbol filters
 - optional runtime state such as realized `R` for the day
 - optional RustyFish daily report
+
+## HTTP server (optional)
+
+The `server` binary exposes the same JSON contract over HTTP (Axum). It is a thin wrapper around `DecisionMachine`; it does not execute trades.
+
+- **Run:** `cargo run` (default binary) or `cargo run --bin server`
+- **Port:** `PORT` environment variable, default `8080`
+- **Logs:** set `RUST_LOG` (e.g. `RUST_LOG=tower_http=trace,binance_BTC=info`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Liveness (`ok`) |
+| `GET` | `/v1/capabilities` | Same payload as `DecisionMachine::capabilities()` |
+| `POST` | `/v1/evaluate` | Body: `MachineRequest` JSON → `MachineResponse` JSON |
+
+Invalid JSON returns **422**. Evaluation errors (e.g. insufficient history) return **400** with a plain-text body.
+
+## Binance data CLI (`binance-fetch`)
+
+Read-only calls to **Binance Spot** REST (no API keys). Uses `reqwest` with **rustls**.
+
+- **Run:** `cargo run --bin binance-fetch -- <subcommand> [options]`
+
+**`klines`** — downloads [`GET /api/v3/klines`](https://developers.binance.com/docs/binance-spot-api-docs/rest-api/market-data-endpoints#klinecandlestick-data) and prints a **`MachineRequest` JSON** (minimal fields: `candles_15m` filled, rest empty / null). Pipe or save and merge with `symbol_filters` / `account_equity` before `POST /v1/evaluate` if needed.
+
+- `--symbol` (default `BTCUSDT`), `--interval` (default `15m`), `--limit` (default `1000`, max `1000`)
+- `--start-time` / `--end-time` — optional Unix **milliseconds** (`startTime` / `endTime` query params)
+- `--base-url` — default `https://api.binance.com`; use e.g. `https://testnet.binance.vision` for the Spot testnet host when applicable
+
+Example:
+
+```bash
+cargo run --bin binance-fetch -- klines --symbol BTCUSDT --interval 15m --limit 1000 > request.json
+```
+
+**`symbol-filters`** — fetches `exchangeInfo` and prints **`symbol_filters`** JSON (`tick_size`, `lot_step`) for `--symbol`.
+
+```bash
+cargo run --bin binance-fetch -- symbol-filters --symbol BTCUSDT
+```
+
+Library helpers live in [`src/adapters/binance/klines_rest.rs`](src/adapters/binance/klines_rest.rs) (`fetch_klines`, `parse_klines_json`).
 
 ## What “normalized” means
 
@@ -566,8 +608,8 @@ The engine's theory is:
 ## Example
 
 ```rust
-use btc_continuation_v1::{DecisionMachine, MachineRequest, RuntimeState};
-use btc_continuation_v1::domain::Candle;
+use binance_BTC::{DecisionMachine, MachineRequest, RuntimeState};
+use binance_BTC::domain::Candle;
 use chrono::{Duration, TimeZone, Utc};
 
 let machine = DecisionMachine::default();
@@ -593,7 +635,7 @@ let response = machine.evaluate(MachineRequest {
     runtime_state: RuntimeState::default(),
     account_equity: Some(100_000.0),
     symbol_filters: None,
-    rustyfish_report: None,
+    rustyfish_overlay: None,
 })?;
 ```
 
@@ -971,7 +1013,7 @@ JSON shape is:
 
 ```json
 {
-  "machine_name": "btc_continuation_v1_machine",
+  "machine_name": "binance_BTC_machine",
   "machine_version": "0.1.0",
   "execution_enabled": false,
   "supported_actions": [
