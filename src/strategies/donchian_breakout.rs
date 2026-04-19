@@ -29,7 +29,7 @@ impl DonchianBreakoutEngine {
     }
 
     pub fn evaluate_signal(&self, index: usize, dataset: &PreparedDataset) -> SignalDecision {
-        let frame = &dataset.frames_15m[index];
+        let frame = &dataset.frames[index];
         let trigger_price = buy_stop_trigger_price(frame.candle.high, self.config.tick_size);
 
         let (mut reasons, regime) = common_veto_reasons(
@@ -46,7 +46,7 @@ impl DonchianBreakoutEngine {
                 reasons,
                 regime: Some(regime),
                 trigger_price: Some(trigger_price),
-                atr: frame.atr_15m,
+                atr: frame.atr,
             };
         }
 
@@ -63,7 +63,7 @@ impl DonchianBreakoutEngine {
         let close = frame.candle.close;
         let tol = (self.config.tick_size * 0.5).max(1e-6);
         let breakout = if index >= 20 {
-            let prior_upper = dataset.frames_15m[index - 20..index]
+            let prior_upper = dataset.frames[index - 20..index]
                 .iter()
                 .map(|f| f.candle.high)
                 .fold(f64::NEG_INFINITY, f64::max);
@@ -89,7 +89,7 @@ impl DonchianBreakoutEngine {
             reasons,
             regime: Some(regime),
             trigger_price: Some(trigger_price),
-            atr: frame.atr_15m,
+            atr: frame.atr,
         }
     }
 }
@@ -102,8 +102,8 @@ mod tests {
     use crate::config::StrategyConfig;
     use crate::domain::Candle;
     use crate::market_data::{
-        PreparedCandle, PreparedDataset,
         snapshot::{IndicatorSnapshot, VolumeSnapshot},
+        PreparedCandle, PreparedDataset,
     };
 
     fn frame_at(minute: i64, high: f64, close: f64, cmf: f64) -> PreparedCandle {
@@ -120,12 +120,12 @@ mod tests {
                 sell_volume: None,
                 delta: None,
             },
-            ema_fast_15m: None,
-            ema_slow_15m: None,
-            ema_fast_1h: None,
-            ema_slow_1h: None,
-            vwma_15m: None,
-            atr_15m: Some(10.0),
+            ema_fast: None,
+            ema_slow: None,
+            ema_fast_higher: None,
+            ema_slow_higher: None,
+            vwma: None,
+            atr: Some(10.0),
             atr_pct: None,
             atr_pct_baseline: Some(0.01),
             vol_ratio: Some(1.0),
@@ -152,7 +152,7 @@ mod tests {
         }
         frames.push(frame_at(20 * 15, 121.0, 121.0, 1.0));
         let dataset = PreparedDataset {
-            frames_15m: frames,
+            frames,
             macro_events: Vec::new(),
         };
         let engine = DonchianBreakoutEngine::new(StrategyConfig {
@@ -164,11 +164,9 @@ mod tests {
         });
 
         let decision = engine.evaluate_signal(20, &dataset);
-        assert!(
-            !decision
-                .reasons
-                .iter()
-                .any(|reason| reason == "close_not_at_donchian_upper")
-        );
+        assert!(!decision
+            .reasons
+            .iter()
+            .any(|reason| reason == "close_not_at_donchian_upper"));
     }
 }

@@ -45,7 +45,7 @@
     "tick_size": 0.1,
     "lot_step": 0.001
   },
-  "rustyfish_overlay": {
+  "parameter_overlay": {
     "report_timestamp_ms": 1744682400000,
     "trend_bias": 0.2,
     "chop_bias": 0.0,

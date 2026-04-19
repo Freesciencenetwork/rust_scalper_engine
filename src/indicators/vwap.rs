@@ -1,4 +1,11 @@
 //! Session / rolling VWAP with optional volume-weighted σ bands.
+//!
+//! **Timeframe notes:**
+//! - `UtcDay` anchor resets at each UTC midnight. Correct for sub-daily bars (1m–4h).
+//!   For daily bars it resets every bar (= typical price per bar, no smoothing).
+//!   For weekly+ bars the same applies — use `RollingBars` instead.
+//! - `RollingBars` is fully timeframe-agnostic (count-based window).
+//! - `Disabled` suppresses the field entirely.
 
 use chrono::NaiveDate;
 

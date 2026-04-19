@@ -66,7 +66,7 @@ pub mod zscore;
 
 pub use ad_line::ad_line_series;
 pub use adx::adx_series;
-pub use aggregate_one_hour::aggregate_15m_to_1h;
+pub use aggregate_one_hour::aggregate_to_higher_tf;
 pub use alma::alma_series;
 pub use aroon::aroon_series;
 pub use atr::atr_series;

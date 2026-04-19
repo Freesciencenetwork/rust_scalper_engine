@@ -12,11 +12,11 @@ pub fn update(
         return;
     }
     let start = index - config.breakout_lookback;
-    let breakout_level = dataset.frames_15m[start..index]
+    let breakout_level = dataset.frames[start..index]
         .iter()
         .map(|frame| frame.candle.high)
         .fold(f64::MIN, f64::max);
-    let close = dataset.frames_15m[index].candle.close;
+    let close = dataset.frames[index].candle.close;
 
     if close > breakout_level {
         state.breakout_level = Some(breakout_level);

@@ -1,57 +1,38 @@
-use std::collections::BTreeMap;
-
 use anyhow::{Result, bail};
-use chrono::{DateTime, Duration, Timelike, Utc};
-
 use crate::domain::Candle;
 
-pub fn aggregate_15m_to_1h(candles: &[Candle]) -> Result<Vec<Candle>> {
-    let mut groups: BTreeMap<DateTime<Utc>, Vec<Candle>> = BTreeMap::new();
-
-    for candle in candles {
-        let close_time = candle.close_time;
-        let hour_floor = close_time
-            .date_naive()
-            .and_hms_opt(close_time.hour(), 0, 0)
-            .expect("valid hour");
-        let hour_floor = DateTime::<Utc>::from_naive_utc_and_offset(hour_floor, Utc);
-        let hour_close = if close_time.minute() == 0 && close_time.second() == 0 {
-            hour_floor
-        } else {
-            hour_floor + Duration::hours(1)
-        };
-        groups.entry(hour_close).or_default().push(candle.clone());
+/// Aggregate `candles` into higher-timeframe bars by grouping every `factor` consecutive bars.
+///
+/// Trailing incomplete groups (fewer than `factor` bars) are dropped.
+/// Returns an error when `factor` is zero or no complete groups can be formed.
+pub fn aggregate_to_higher_tf(candles: &[Candle], factor: usize) -> Result<Vec<Candle>> {
+    if factor == 0 {
+        bail!("higher_tf_factor must be >= 1");
     }
-
-    let mut aggregated = Vec::new();
-    for (hour_close, mut group) in groups {
-        if group.len() != 4 {
-            continue;
-        }
-        group.sort_by_key(|candle| candle.close_time);
-        if !is_complete_hour_group(hour_close, &group) {
-            continue;
-        }
-
-        let first = group.first().expect("non-empty group");
-        let last = group.last().expect("non-empty group");
-        let high = group
-            .iter()
-            .map(|candle| candle.high)
-            .reduce(f64::max)
-            .expect("group has highs");
-        let low = group
-            .iter()
-            .map(|candle| candle.low)
-            .reduce(f64::min)
-            .expect("group has lows");
-        let volume: f64 = group.iter().map(|candle| candle.volume).sum();
-        let buy_volume = sum_optional(group.iter().map(|candle| candle.buy_volume));
-        let sell_volume = sum_optional(group.iter().map(|candle| candle.sell_volume));
-        let delta = sum_optional(group.iter().map(|candle| candle.inferred_delta()));
-
+    if factor == 1 {
+        return Ok(candles.to_vec());
+    }
+    let complete_groups = candles.len() / factor;
+    if complete_groups == 0 {
+        bail!(
+            "not enough candles ({}) to form even one higher-TF bar (factor={})",
+            candles.len(),
+            factor
+        );
+    }
+    let mut aggregated = Vec::with_capacity(complete_groups);
+    for g in 0..complete_groups {
+        let group = &candles[g * factor..(g + 1) * factor];
+        let first = &group[0];
+        let last = &group[group.len() - 1];
+        let high = group.iter().map(|c| c.high).fold(f64::NEG_INFINITY, f64::max);
+        let low = group.iter().map(|c| c.low).fold(f64::INFINITY, f64::min);
+        let volume: f64 = group.iter().map(|c| c.volume).sum();
+        let buy_volume = sum_optional(group.iter().map(|c| c.buy_volume));
+        let sell_volume = sum_optional(group.iter().map(|c| c.sell_volume));
+        let delta = sum_optional(group.iter().map(|c| c.inferred_delta()));
         aggregated.push(Candle {
-            close_time: hour_close,
+            close_time: last.close_time,
             open: first.open,
             high,
             low,
@@ -62,22 +43,7 @@ pub fn aggregate_15m_to_1h(candles: &[Candle]) -> Result<Vec<Candle>> {
             delta,
         });
     }
-
-    if aggregated.is_empty() {
-        bail!("unable to derive any complete 1h candles from the supplied 15m data");
-    }
-
     Ok(aggregated)
-}
-
-fn is_complete_hour_group(hour_close: DateTime<Utc>, group: &[Candle]) -> bool {
-    let expected_offsets = [45_i64, 30, 15, 0];
-    group
-        .iter()
-        .zip(expected_offsets)
-        .all(|(candle, offset_minutes)| {
-            candle.close_time == hour_close - Duration::minutes(offset_minutes)
-        })
 }
 
 fn sum_optional<I>(values: I) -> Option<f64>
@@ -95,15 +61,15 @@ where
 
 #[cfg(test)]
 mod tests {
-    use chrono::{Duration, TimeZone, Timelike, Utc};
+    use chrono::{Duration, TimeZone, Utc};
 
-    use super::aggregate_15m_to_1h;
+    use super::aggregate_to_higher_tf;
     use crate::domain::Candle;
 
-    fn candle_at(minute: i64, close: f64) -> Candle {
+    fn make_candle(i: i64, close: f64) -> Candle {
         Candle {
             close_time: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
-                + Duration::minutes(minute),
+                + Duration::minutes(i * 15),
             open: close - 1.0,
             high: close + 1.0,
             low: close - 2.0,
@@ -116,47 +82,54 @@ mod tests {
     }
 
     #[test]
-    fn aggregates_four_fifteen_minute_candles_into_one_hour() {
-        let candles = vec![
-            candle_at(15, 100.0),
-            candle_at(30, 101.0),
-            candle_at(45, 102.0),
-            candle_at(60, 103.0),
-        ];
-        let aggregated = aggregate_15m_to_1h(&candles).expect("aggregation");
-        assert_eq!(aggregated.len(), 1);
-        assert_eq!(aggregated[0].close, 103.0);
-        assert_eq!(aggregated[0].close_time.hour(), 1);
+    fn groups_four_bars_into_one() {
+        let candles: Vec<Candle> = (0..4).map(|i| make_candle(i, 100.0 + i as f64)).collect();
+        let result = aggregate_to_higher_tf(&candles, 4).expect("ok");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].open, candles[0].open);
+        assert_eq!(result[0].close, candles[3].close);
+        assert_eq!(result[0].close_time, candles[3].close_time);
     }
 
     #[test]
-    fn sorts_group_before_aggregating_open_and_close() {
-        let candles = vec![
-            candle_at(45, 102.0),
-            candle_at(15, 100.0),
-            candle_at(60, 103.0),
-            candle_at(30, 101.0),
-        ];
-
-        let aggregated = aggregate_15m_to_1h(&candles).expect("aggregation");
-        assert_eq!(aggregated.len(), 1);
-        assert_eq!(aggregated[0].open, 99.0);
-        assert_eq!(aggregated[0].close, 103.0);
+    fn drops_trailing_incomplete_group() {
+        let candles: Vec<Candle> = (0..9).map(|i| make_candle(i, 100.0 + i as f64)).collect();
+        let result = aggregate_to_higher_tf(&candles, 4).expect("ok");
+        // 9 / 4 = 2 complete groups; trailing 1 bar dropped
+        assert_eq!(result.len(), 2);
     }
 
     #[test]
-    fn skips_groups_with_missing_or_duplicate_quarter_hours() {
-        let candles = vec![
-            candle_at(15, 100.0),
-            candle_at(15, 101.0),
-            candle_at(45, 102.0),
-            candle_at(60, 103.0),
-        ];
+    fn factor_one_returns_clone() {
+        let candles: Vec<Candle> = (0..5).map(|i| make_candle(i, 100.0)).collect();
+        let result = aggregate_to_higher_tf(&candles, 1).expect("ok");
+        assert_eq!(result.len(), 5);
+    }
 
-        let err = aggregate_15m_to_1h(&candles).expect_err("expected incomplete group rejection");
-        assert!(
-            err.to_string()
-                .contains("unable to derive any complete 1h candles")
-        );
+    #[test]
+    fn factor_zero_errors() {
+        let candles: Vec<Candle> = (0..4).map(|i| make_candle(i, 100.0)).collect();
+        assert!(aggregate_to_higher_tf(&candles, 0).is_err());
+    }
+
+    #[test]
+    fn too_few_candles_for_factor_errors() {
+        let candles: Vec<Candle> = (0..3).map(|i| make_candle(i, 100.0)).collect();
+        assert!(aggregate_to_higher_tf(&candles, 4).is_err());
+    }
+
+    #[test]
+    fn high_low_volume_aggregated_correctly() {
+        let candles = vec![
+            make_candle(0, 100.0), // high=101, low=98
+            make_candle(1, 105.0), // high=106, low=103
+            make_candle(2, 95.0),  // high=96, low=93
+            make_candle(3, 102.0), // high=103, low=100
+        ];
+        let result = aggregate_to_higher_tf(&candles, 4).expect("ok");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].high, 106.0);
+        assert_eq!(result[0].low, 93.0);
+        assert_eq!(result[0].volume, 40.0);
     }
 }

@@ -19,3 +19,25 @@ Five Python strategies called POST /v1/evaluate with rolling ~1000-bar windows +
 
 ## If goal is >60% win rate
 Not compatible with default 2:3 ATR R:R without cutting winners short or asymmetric exits; need different product spec (partial exits, trail, mean-reversion TP, etc.) or accept lower win% with positive expectancy at portfolio level.
+
+---
+
+# HTTP API: indicators / strategies (2026-04-19)
+
+## What you were trying to achieve
+- **Discovery split:** clearer REST than only `GET /v1/catalog` — e.g. dedicated **`/indicators`** (list all indicator leaf paths + warmup metadata) and **`/strategies`** (list all strategy ids), not only one combined catalog blob.
+- **One indicator, read:** something like **`GET /v1/indicators/{name}`** (you wrote `mdma` in chat — intent: **one catalog path**) returning exactly what that indicator exposes (schema / `min_bars_required` / notes, and/or last-bar value if paired with data).
+- **One indicator, write (test harness):** **`POST`** with the same candle **`MachineRequest`** body as evaluate, but scoped to **a single indicator** — URL carrying the indicator id so you can **probe your payload** against one leaf without running full **`evaluate_multi`**.
+- **URL shape you asked for last:** **`POST /indicators/{indicator_name}`** (versioned here as **`POST /v1/indicators/{indicator_name}`**).
+
+## What was actually implemented (this pass)
+- **`POST /v1/indicators/{indicator_name}`** wired in `src/bin/server.rs` under the same **`EVALUATE_API_KEY`** + optional **`EVALUATE_MAX_INFLIGHT`** stack as `evaluate` / `evaluate_multi`.
+- **Library:** `DecisionMachine::evaluate_indicator` in `src/machine.rs` — builds dataset from `MachineRequest`, takes **last** bar, flattens `PreparedCandle` JSON like catalog/`evaluate_multi`, looks up **`indicator_name` as exact dot-path** (must match `GET /v1/catalog` → `indicators[].path`). Returns **`IndicatorEvaluateResponse`** (`path` + flattened **`IndicatorValueReport`**: `value`, `computable`, `min_bars_required`, `bars_available`, `path_note`). **`EvaluateIndicatorError::Unknown`** → HTTP **404** `{"error":"unknown_indicator","path":"..."}`; prep/serde issues → **400** `invalid_request`.
+- **Exports:** `IndicatorEvaluateResponse`, `EvaluateIndicatorError` from crate root (`lib.rs`).
+- **Tests:** unit tests in `machine.rs` (happy path `ema_fast_15m`, unknown path). Manual curl: 200 on `ema_fast_15m` + 96 bars, 404 on bogus name.
+- **Docs:** README HTTP table row; `context/state.md` bullet.
+
+## Not done yet (if you still want the full original sketch)
+- **`GET /v1/indicators`** and **`GET /v1/strategies`** as thin slices of catalog (or aliases).
+- **`GET /v1/indicators/{name}`** for metadata-only (no POST) — today you can still read that from catalog + warmup helpers, or GET catalog once and filter client-side.
+- **Partial / slug names** (e.g. `rsi_14` without full `indicator_snapshot...` prefix) — current contract is **exact catalog path only**.

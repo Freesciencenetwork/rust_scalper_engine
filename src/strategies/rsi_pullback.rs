@@ -29,7 +29,7 @@ impl RsiPullbackEngine {
     }
 
     pub fn evaluate_signal(&self, index: usize, dataset: &PreparedDataset) -> SignalDecision {
-        let frame = &dataset.frames_15m[index];
+        let frame = &dataset.frames[index];
         let trigger_price = buy_stop_trigger_price(frame.candle.high, self.config.tick_size);
 
         let (mut reasons, regime) = common_veto_reasons(
@@ -46,7 +46,7 @@ impl RsiPullbackEngine {
                 reasons,
                 regime: Some(regime),
                 trigger_price: Some(trigger_price),
-                atr: frame.atr_15m,
+                atr: frame.atr,
             };
         }
 
@@ -61,8 +61,8 @@ impl RsiPullbackEngine {
         }
 
         let ema_up = frame
-            .ema_fast_15m
-            .zip(frame.ema_slow_15m)
+            .ema_fast
+            .zip(frame.ema_slow)
             .is_some_and(|(fast, slow)| fast > slow);
         if !ema_up {
             reasons.push("ema_fast_not_above_slow".to_string());
@@ -71,7 +71,7 @@ impl RsiPullbackEngine {
         let rsi_now = frame.indicator_snapshot.momentum.rsi_14;
         let rsi_prev = index
             .checked_sub(1)
-            .and_then(|i| dataset.frames_15m[i].indicator_snapshot.momentum.rsi_14);
+            .and_then(|i| dataset.frames[i].indicator_snapshot.momentum.rsi_14);
 
         let pullback_ok = match (rsi_now, rsi_prev) {
             (Some(cur), Some(prev)) => cur > prev && cur < 48.0 && cur > 28.0,
@@ -86,7 +86,7 @@ impl RsiPullbackEngine {
             reasons,
             regime: Some(regime),
             trigger_price: Some(trigger_price),
-            atr: frame.atr_15m,
+            atr: frame.atr,
         }
     }
 }

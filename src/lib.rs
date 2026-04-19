@@ -2,6 +2,7 @@
 #![allow(clippy::multiple_crate_versions)] // Transitive graph (e.g. `windows-sys`, `getrandom`); dedup belongs at workspace/lockfile policy, not here.
 
 pub mod adapters;
+pub mod catalog;
 pub mod config;
 pub mod context;
 pub mod domain;
@@ -12,13 +13,19 @@ pub mod statistics;
 pub mod strategies;
 pub mod strategy;
 
+pub use catalog::{
+    CatalogIndicatorEntry, CatalogResponse, CatalogStrategyEntry, EngineSeriesSemantics,
+    min_bars_required_for_path, path_note,
+};
 pub use config::{StrategyConfig, VwapAnchorMode};
 pub use domain::{Candle, MacroEvent, SymbolFilters};
 pub use indicators::{VolumeProfileZones, volume_profile_zones};
 pub use machine::{
-    ConfigOverrides, DecisionMachine, MachineAction, MachineCapabilities, MachineDiagnostics,
-    MachineRequest, MachineResponse, RuntimeState,
+    ConfigOverrides, DecisionMachine, EvaluateIndicatorError, IndicatorEvaluateResponse,
+    IndicatorReplayRequest, IndicatorReplayResponse, IndicatorReplayStep, IndicatorValueReport,
+    MachineCapabilities, MachineRequest, RuntimeState,
 };
+pub use strategies::supported_strategy_ids;
 pub use market_data::{
     CandlestickPatternSnapshot, DirectionalSnapshot, IchimokuSnapshot, IndicatorSnapshot,
     MomentumSnapshot, PivotClassicSnapshot, PivotFibSnapshot, PreparedCandle, PreparedDataset,

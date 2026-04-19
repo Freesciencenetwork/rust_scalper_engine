@@ -43,4 +43,4 @@ Not based on: ML prediction of next candle, order-book L2, funding, cross-asset 
 
 ## Optional overlay
 
-**RustyFish** numeric overlay can tighten parameters (e.g. vol floor) when external daily report is attached — policy in `src/context/`.
+An optional **daily parameter overlay** (numeric report → [`ParameterOverlay`](src/context/overlay.rs)) can tighten parameters (e.g. vol floor) when attached — policy in `src/context/`.

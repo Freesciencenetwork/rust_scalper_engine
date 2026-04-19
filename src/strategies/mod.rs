@@ -307,6 +307,21 @@ impl Strategy for DonchianBreakoutEngine {
     }
 }
 
+/// Ids accepted by [`strategy_engine_for`] (keep in sync with the match arms).
+pub fn supported_strategy_ids() -> &'static [&'static str] {
+    &[
+        default::DEFAULT_STRATEGY_ID,
+        macd_trend::MACD_TREND_STRATEGY_ID,
+        rsi_pullback::RSI_PULLBACK_STRATEGY_ID,
+        supertrend_adx::SUPERTREND_ADX_STRATEGY_ID,
+        bb_mean_reversion::BB_MEAN_REVERSION_STRATEGY_ID,
+        stoch_crossover::STOCH_CROSSOVER_STRATEGY_ID,
+        ichimoku_trend::ICHIMOKU_TREND_STRATEGY_ID,
+        ttm_squeeze_fire::TTM_SQUEEZE_FIRE_STRATEGY_ID,
+        donchian_breakout::DONCHIAN_BREAKOUT_STRATEGY_ID,
+    ]
+}
+
 pub fn strategy_engine_for(config: &StrategyConfig) -> anyhow::Result<Box<dyn Strategy>> {
     match config.strategy_id.as_str() {
         default::DEFAULT_STRATEGY_ID => Ok(Box::new(default::StrategyEngine::new(config.clone()))),
@@ -342,16 +357,7 @@ mod strategy_id_tests {
 
     #[test]
     fn strategy_engine_for_accepts_indicator_strategies() {
-        for id in [
-            macd_trend::MACD_TREND_STRATEGY_ID,
-            rsi_pullback::RSI_PULLBACK_STRATEGY_ID,
-            supertrend_adx::SUPERTREND_ADX_STRATEGY_ID,
-            bb_mean_reversion::BB_MEAN_REVERSION_STRATEGY_ID,
-            stoch_crossover::STOCH_CROSSOVER_STRATEGY_ID,
-            ichimoku_trend::ICHIMOKU_TREND_STRATEGY_ID,
-            ttm_squeeze_fire::TTM_SQUEEZE_FIRE_STRATEGY_ID,
-            donchian_breakout::DONCHIAN_BREAKOUT_STRATEGY_ID,
-        ] {
+        for &id in supported_strategy_ids() {
             let config = StrategyConfig {
                 strategy_id: id.to_string(),
                 ..Default::default()

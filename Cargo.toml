@@ -28,10 +28,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 name = "server"
 path = "src/bin/server.rs"
 
-[[bin]]
-name = "paper_bot"
-path = "src/bin/paper_bot.rs"
-
 # Throughput for high-QPS deployments (`cargo build --release`).
 [profile.release]
 opt-level = 3

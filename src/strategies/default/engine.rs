@@ -30,7 +30,7 @@ impl StrategyEngine {
     }
 
     pub fn evaluate_signal(&self, index: usize, dataset: &PreparedDataset) -> SignalDecision {
-        let frame = &dataset.frames_15m[index];
+        let frame = &dataset.frames[index];
         let trigger_price = buy_stop_trigger_price(frame.candle.high, self.config.tick_size);
         let mut decision = self.evaluate_common_blocks(index, dataset, Some(trigger_price));
         if !decision.allowed {
@@ -47,7 +47,7 @@ impl StrategyEngine {
             decision.allowed = false;
             decision.reasons.push("1h_trend_not_bullish".to_string());
         }
-        if !lower_timeframe_trend(index, &dataset.frames_15m, self.config.trend_confirm_bars) {
+        if !lower_timeframe_trend(index, &dataset.frames, self.config.trend_confirm_bars) {
             decision.allowed = false;
             decision.reasons.push("15m_trend_not_bullish".to_string());
         }
@@ -87,7 +87,7 @@ impl StrategyEngine {
         dataset: &PreparedDataset,
         trigger_price: Option<f64>,
     ) -> SignalDecision {
-        let frame = &dataset.frames_15m[index];
+        let frame = &dataset.frames[index];
         let mut reasons = Vec::new();
 
         if self.system_mode == crate::domain::SystemMode::Halted {
@@ -119,7 +119,7 @@ impl StrategyEngine {
             reasons,
             regime: Some(regime),
             trigger_price,
-            atr: frame.atr_15m,
+            atr: frame.atr,
         }
     }
 

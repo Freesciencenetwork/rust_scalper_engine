@@ -1,5 +1,5 @@
 //! Exercises every indicator wired in `PreparedDataset::build` (see `market_data/prepare.rs`).
-//! Uses synthetic 15m candles aligned to `aggregate_15m_to_1h` expectations.
+//! Uses synthetic candles; `higher_tf_factor` defaults to 4 so groups of 4 bars form one higher-TF bar.
 
 #![allow(clippy::pedantic, clippy::nursery)] // Large synthetic candle harness; pedantic on test loops is low value.
 
@@ -153,12 +153,12 @@ fn assert_indicator_snapshot_finite(s: &binance_BTC::IndicatorSnapshot) {
 }
 
 fn assert_prepared_fields_finite(frame: &binance_BTC::PreparedCandle) {
-    assert_finite_opt("ema_fast_15m", frame.ema_fast_15m);
-    assert_finite_opt("ema_slow_15m", frame.ema_slow_15m);
-    assert_finite_opt("ema_fast_1h", frame.ema_fast_1h);
-    assert_finite_opt("ema_slow_1h", frame.ema_slow_1h);
-    assert_finite_opt("vwma_15m", frame.vwma_15m);
-    assert_finite_opt("atr_15m", frame.atr_15m);
+    assert_finite_opt("ema_fast", frame.ema_fast);
+    assert_finite_opt("ema_slow", frame.ema_slow);
+    assert_finite_opt("ema_fast_higher", frame.ema_fast_higher);
+    assert_finite_opt("ema_slow_higher", frame.ema_slow_higher);
+    assert_finite_opt("vwma", frame.vwma);
+    assert_finite_opt("atr", frame.atr);
     assert_finite_opt("atr_pct", frame.atr_pct);
     assert_finite_opt("atr_pct_baseline", frame.atr_pct_baseline);
     assert_finite_opt("vol_ratio", frame.vol_ratio);
@@ -169,9 +169,9 @@ fn assert_prepared_fields_finite(frame: &binance_BTC::PreparedCandle) {
     assert_finite_opt("vp_vah", frame.vp_vah);
 }
 
-/// 15m bars starting at 00:15 UTC, stepping 15 minutes (valid for `aggregate_15m_to_1h`).
+/// Synthetic bars stepping 15 minutes from 00:15 UTC (any timeframe label; engine is bar-count based).
 fn synthetic_candles_15m(count: usize) -> Vec<Candle> {
-    assert!(count >= 4, "need at least one full hour of 15m bars");
+    assert!(count >= 4, "need at least 4 bars to form one higher-TF bar at default factor");
     let base = Utc.with_ymd_and_hms(2026, 1, 5, 0, 0, 0).unwrap();
     let mut out = Vec::with_capacity(count);
     let mut price = 100.0_f64;
@@ -220,7 +220,7 @@ fn prepared_dataset_computes_all_indicators_without_panic() {
     let config = config_for_full_indicator_warmup();
     let candles = synthetic_candles_15m(BAR_COUNT);
     let dataset = PreparedDataset::build(&config, candles, vec![]).expect("prepared dataset");
-    assert_eq!(dataset.frames_15m.len(), BAR_COUNT);
+    assert_eq!(dataset.frames.len(), BAR_COUNT);
 }
 
 #[test]
@@ -228,7 +228,7 @@ fn last_bar_indicator_values_are_finite() {
     let config = config_for_full_indicator_warmup();
     let candles = synthetic_candles_15m(BAR_COUNT);
     let dataset = PreparedDataset::build(&config, candles, vec![]).expect("prepared dataset");
-    let last = dataset.frames_15m.last().expect("at least one frame");
+    let last = dataset.frames.last().expect("at least one frame");
 
     assert_prepared_fields_finite(last);
     assert_indicator_snapshot_finite(&last.indicator_snapshot);
@@ -254,7 +254,7 @@ fn last_bar_indicator_values_are_finite() {
         s.trend.mama.is_some(),
         "mama should be defined after warmup"
     );
-    assert!(last.vwma_15m.is_some(), "vwma should be defined");
+    assert!(last.vwma.is_some(), "vwma should be defined");
     assert!(
         last.vp_poc.is_some(),
         "volume profile POC should be defined when vp_enabled and enough bars"

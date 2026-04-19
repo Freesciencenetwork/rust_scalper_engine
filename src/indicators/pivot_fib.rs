@@ -1,4 +1,7 @@
 //! Fibonacci daily pivots from prior UTC day H/L/C.
+//!
+//! **Timeframe notes:** identical to `pivot_classic` — works for sub-daily and daily bars;
+//! returns `None` for all fields when bars span more than one UTC day (weekly+).
 
 use std::collections::BTreeMap;
 

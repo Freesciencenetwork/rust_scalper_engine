@@ -7,7 +7,7 @@ pub fn active(
     entry_price: f64,
     config: &StrategyConfig,
 ) -> bool {
-    let Some(atr) = dataset.frames_15m[index].atr_15m else {
+    let Some(atr) = dataset.frames[index].atr else {
         return false;
     };
     if index < 4 {
@@ -20,11 +20,11 @@ pub fn active(
         if candidate + 2 > index {
             break;
         }
-        let high = dataset.frames_15m[candidate].candle.high;
-        let left_one = dataset.frames_15m[candidate - 1].candle.high;
-        let left_two = dataset.frames_15m[candidate - 2].candle.high;
-        let right_one = dataset.frames_15m[candidate + 1].candle.high;
-        let right_two = dataset.frames_15m[candidate + 2].candle.high;
+        let high = dataset.frames[candidate].candle.high;
+        let left_one = dataset.frames[candidate - 1].candle.high;
+        let left_two = dataset.frames[candidate - 2].candle.high;
+        let right_one = dataset.frames[candidate + 1].candle.high;
+        let right_two = dataset.frames[candidate + 2].candle.high;
         let is_local_high =
             high > left_one && high > left_two && high >= right_one && high >= right_two;
         if is_local_high && high > entry_price {
@@ -46,7 +46,7 @@ mod tests {
     use super::active;
     use crate::config::StrategyConfig;
     use crate::domain::Candle;
-    use crate::market_data::{PreparedCandle, PreparedDataset, snapshot::IndicatorSnapshot};
+    use crate::market_data::{snapshot::IndicatorSnapshot, PreparedCandle, PreparedDataset};
 
     fn frame_at(minute: i64, high: f64, close: f64, atr: f64) -> PreparedCandle {
         PreparedCandle {
@@ -62,12 +62,12 @@ mod tests {
                 sell_volume: None,
                 delta: None,
             },
-            ema_fast_15m: None,
-            ema_slow_15m: None,
-            ema_fast_1h: None,
-            ema_slow_1h: None,
-            vwma_15m: None,
-            atr_15m: Some(atr),
+            ema_fast: None,
+            ema_slow: None,
+            ema_fast_higher: None,
+            ema_slow_higher: None,
+            vwma: None,
+            atr: Some(atr),
             atr_pct: None,
             atr_pct_baseline: None,
             vol_ratio: None,
@@ -92,7 +92,7 @@ mod tests {
             frame_at(90, 105.0, 104.0, 10.0),
         ];
         let dataset = PreparedDataset {
-            frames_15m: frames,
+            frames,
             macro_events: Vec::new(),
         };
         let config = StrategyConfig {

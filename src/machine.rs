@@ -1,20 +1,16 @@
 #![allow(clippy::pedantic, clippy::nursery)] // Request orchestration; pedantic on large evaluate() is low signal.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 
 use crate::config::StrategyConfig;
-use crate::context::overlay::ParameterOverlay;
-use crate::context::policy::apply_overlay_to_config;
-use crate::context::rustyfish::{RustyFishDailyReport, map_report_to_overlay};
-use crate::domain::{Candle, MacroEvent, SymbolFilters, SystemMode};
-use crate::market_data::{PreparedCandle, PreparedDataset};
-use crate::strategies::strategy_engine_for;
-use crate::strategy::SignalDecision;
-use crate::strategy::formulas::{PositionPlan, build_position_plan};
+use crate::domain::{Candle, MacroEvent, SymbolFilters};
+use crate::market_data::PreparedDataset;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RuntimeState {
@@ -26,14 +22,19 @@ pub struct RuntimeState {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MachineRequest {
-    pub candles_15m: Vec<Candle>,
+    /// Closed OHLCV bars, **oldest first**. JSON may use **`candles_15m`** as a backward-compat alias for this field.
+    #[serde(alias = "candles_15m")]
+    pub candles: Vec<Candle>,
+    /// Optional label for what each row represents (e.g. `"15m"`, `"1h"`, `"4h"`). The engine still
+    /// treats the series as **uniform steps**; warmup hints are expressed in **row counts**, not minutes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bar_interval: Option<String>,
     #[serde(default)]
     pub macro_events: Vec<MacroEvent>,
     #[serde(default)]
     pub runtime_state: RuntimeState,
     pub account_equity: Option<f64>,
     pub symbol_filters: Option<SymbolFilters>,
-    pub rustyfish_overlay: Option<RustyFishDailyReport>,
     #[serde(default)]
     pub config_overrides: Option<ConfigOverrides>,
 }
@@ -56,22 +57,14 @@ pub struct ConfigOverrides {
     pub vp_value_area_ratio: Option<f64>,
     pub vp_bin_count: Option<usize>,
     pub strategy_id: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MachineAction {
-    StandAside,
-    ArmLongStop,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct MachineDiagnostics {
-    #[serde(with = "chrono::serde::ts_milliseconds")]
-    pub as_of: DateTime<Utc>,
-    pub latest_frame: PreparedCandle,
-    pub effective_config: StrategyConfig,
-    pub overlay: Option<ParameterOverlay>,
+    /// VWAP anchor mode. `"utc_day"` resets at UTC midnight — fine for sub-daily bars.
+    /// For daily/weekly bars use `"rolling_bars"` or `"disabled"`.
+    pub vwap_anchor_mode: Option<crate::config::VwapAnchorMode>,
+    /// Rolling-window bar count for `vwap_anchor_mode = "rolling_bars"`.
+    pub vwap_rolling_bars: Option<usize>,
+    /// Base bars that roll into one higher-TF bar for `ema_fast_higher` / `ema_slow_higher`.
+    /// `4` = every 4 base bars (default, matches 15m→1h). Set `1` to disable.
+    pub higher_tf_factor: Option<usize>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -83,12 +76,103 @@ pub struct MachineCapabilities {
     pub accepted_inputs: Vec<String>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct IndicatorValueReport {
+    pub value: JsonValue,
+    /// `true` when the value is non-null **and** (if known) `bars_available >= min_bars_required`.
+    pub computable: bool,
+    /// Minimum closed bars in **this** series before the path is typically defined (`None` = not catalogued).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_bars_required: Option<u32>,
+    /// Number of closed bars you sent (`candles` / `candles_15m` length).
+    pub bars_available: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path_note: Option<&'static str>,
+}
+
+/// Last-bar snapshot for **one** catalog dot-path (same strings as `GET /v1/catalog` → `indicators[].path`).
+#[derive(Clone, Debug, Serialize)]
+pub struct IndicatorEvaluateResponse {
+    pub path: String,
+    #[serde(flatten)]
+    pub report: IndicatorValueReport,
+}
+
+/// [`DecisionMachine::evaluate_indicator`] failures (HTTP layer maps [`EvaluateIndicatorError::Unknown`] to 404).
+#[derive(Debug)]
+pub enum EvaluateIndicatorError {
+    Unknown { path: String },
+    Dataset(anyhow::Error),
+}
+
+impl std::fmt::Display for EvaluateIndicatorError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unknown { path } => write!(f, "unknown_indicator: {path}"),
+            Self::Dataset(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for EvaluateIndicatorError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Dataset(e) => Some(e.as_ref()),
+            Self::Unknown { .. } => None,
+        }
+    }
+}
+
+/// Request body for indicator replay endpoints.
+///
+/// Same fields as [`ReplayRequest`] (candles + optional window), plus an `indicators` list used
+/// by the multi-indicator variant (`POST /v1/indicators/replay`). The single-indicator variant
+/// (`POST /v1/indicators/{name}/replay`) takes the same body but ignores `indicators` — the path
+/// comes from the URL.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct MachineResponse {
-    pub action: MachineAction,
-    pub decision: SignalDecision,
-    pub plan: Option<PositionPlan>,
-    pub diagnostics: MachineDiagnostics,
+pub struct IndicatorReplayRequest {
+    #[serde(flatten)]
+    pub machine: MachineRequest,
+    /// Inclusive start bar index (`0`..`len-1`). Default `0`.
+    #[serde(default)]
+    pub from_index: Option<usize>,
+    /// Inclusive end bar index. Default: last closed bar (`len-1`).
+    #[serde(default)]
+    pub to_index: Option<usize>,
+    /// Emit every Nth bar in the range (`>= 1`). Default `1`.
+    #[serde(default)]
+    pub step: Option<usize>,
+    /// Dot-path strings from `GET /v1/catalog` → `indicators[].path`. Required (non-empty) for
+    /// `POST /v1/indicators/replay`; ignored for the single-indicator URL variant.
+    #[serde(default)]
+    pub indicators: Vec<String>,
+}
+
+/// One bar's worth of indicator values within an [`IndicatorReplayResponse`].
+#[derive(Clone, Debug, Serialize)]
+pub struct IndicatorReplayStep {
+    pub bar_index: usize,
+    #[serde(with = "chrono::serde::ts_milliseconds")]
+    pub close_time: DateTime<Utc>,
+    /// Keyed by the same dot-path strings as `GET /v1/catalog` → `indicators[].path`.
+    pub indicators: BTreeMap<String, IndicatorValueReport>,
+    /// Paths requested but not found in the catalog (unknown dot-paths).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unknown_paths: Vec<String>,
+}
+
+/// Response for both single- and multi-indicator replay endpoints.
+#[derive(Clone, Debug, Serialize)]
+pub struct IndicatorReplayResponse {
+    pub steps: Vec<IndicatorReplayStep>,
+}
+
+/// Hard cap for [`DecisionMachine::evaluate_replay`] (HTTP / batch safety).
+const MAX_REPLAY_STEPS: usize = 50_000;
+
+struct EvaluationContext {
+    config: StrategyConfig,
+    dataset: PreparedDataset,
 }
 
 fn build_machine_capabilities() -> MachineCapabilities {
@@ -98,11 +182,10 @@ fn build_machine_capabilities() -> MachineCapabilities {
         execution_enabled: false,
         supported_actions: vec!["stand_aside".to_string(), "arm_long_stop".to_string()],
         accepted_inputs: vec![
-            "normalized_15m_candles".to_string(),
+            "candles".to_string(),
             "macro_events_numeric".to_string(),
             "symbol_filters".to_string(),
             "runtime_state_numeric".to_string(),
-            "rustyfish_overlay_numeric".to_string(),
         ],
     }
 }
@@ -135,180 +218,313 @@ impl DecisionMachine {
         self.capabilities.as_ref()
     }
 
-    pub fn evaluate(&self, request: MachineRequest) -> Result<MachineResponse> {
-        let MachineRequest {
-            candles_15m,
-            macro_events,
-            runtime_state,
-            account_equity,
-            symbol_filters,
-            rustyfish_overlay,
-            config_overrides,
-        } = request;
+    /// Static discovery payload (also served as `GET /v1/catalog`).
+    pub fn catalog() -> crate::catalog::CatalogResponse {
+        crate::catalog::build_catalog_response()
+    }
 
-        let mut config = self.base_config.clone();
+    /// Merge `request` into this machine's base [`StrategyConfig`] and build a [`PreparedDataset`]
+    /// (same path as indicator evaluation). For strategy decisions, pair with
+    /// [`crate::strategies::strategy_engine_for`].
+    pub fn prepare_dataset(
+        &self,
+        request: MachineRequest,
+    ) -> Result<(StrategyConfig, PreparedDataset)> {
+        merge_request_and_build_dataset(&self.base_config, request)
+    }
 
-        if let Some(filters) = symbol_filters {
-            config = config.with_symbol_filters(filters);
-        }
-
-        if let Some(ov) = &config_overrides {
-            if let Some(v) = ov.min_target_move_pct {
-                config.min_target_move_pct = v;
-            }
-            if let Some(v) = ov.stop_atr_multiple {
-                config.stop_atr_multiple = v;
-            }
-            if let Some(v) = ov.target_atr_multiple {
-                config.target_atr_multiple = v;
-            }
-            if let Some(v) = ov.runway_lookback {
-                config.runway_lookback = v;
-            }
-            if let Some(v) = ov.ema_fast_period {
-                config.ema_fast_period = v;
-            }
-            if let Some(v) = ov.ema_slow_period {
-                config.ema_slow_period = v;
-            }
-            if let Some(v) = ov.low_vol_enabled {
-                config.low_vol_enabled = v;
-            }
-            if let Some(v) = ov.high_vol_ratio {
-                config.high_vol_ratio = v;
-            }
-            if let Some(v) = ov.breakout_lookback {
-                config.breakout_lookback = v;
-            }
-            if let Some(v) = ov.failed_acceptance_lookback_bars {
-                config.failed_acceptance_lookback_bars = v;
-            }
-            if let Some(v) = ov.trend_confirm_bars {
-                config.trend_confirm_bars = v;
-            }
-            if let Some(v) = ov.vp_enabled {
-                config.vp_enabled = v;
-            }
-            if let Some(v) = ov.vp_lookback_bars {
-                config.vp_lookback_bars = v;
-            }
-            if let Some(v) = ov.vp_value_area_ratio {
-                config.vp_value_area_ratio = v;
-            }
-            if let Some(v) = ov.vp_bin_count {
-                config.vp_bin_count = v;
-            }
-            if let Some(v) = ov.strategy_id.as_ref() {
-                config.strategy_id = v.clone();
-            }
-        }
-
-        let overlay = rustyfish_overlay.as_ref().map(map_report_to_overlay);
-        if let Some(overlay) = overlay.as_ref() {
-            config = apply_overlay_to_config(&config, overlay);
-        }
-
-        let mut dataset = PreparedDataset::build(&config, candles_15m, macro_events)?;
-        let index = dataset
-            .frames_15m
-            .len()
-            .checked_sub(1)
-            .ok_or_else(|| anyhow::anyhow!("at least one closed 15m candle is required"))?;
-
-        let mut strategy = strategy_engine_for(&config)?;
-        if runtime_state.halt_new_entries_flag != 0
-            || runtime_state.realized_net_r_today <= config.daily_loss_limit_r
-        {
-            strategy.set_system_mode(SystemMode::Halted);
-        }
-
-        // Only replay the recent window for failed-acceptance state. Replaying
-        // the full 1000-bar history causes a single old failed breakout to latch
-        // the gate for the remainder of the window. Using a short lookback keeps
-        // the gate responsive to *recent* price structure only.
-        let fa_start = index.saturating_sub(config.failed_acceptance_lookback_bars);
-        strategy.replay_failed_acceptance_window(fa_start, index, &dataset);
-
-        let decision = strategy.decide(index, &dataset);
-        let plan = build_plan(&config, &decision, account_equity);
-        let action = if decision.allowed {
-            MachineAction::ArmLongStop
-        } else {
-            MachineAction::StandAside
-        };
-        // `index` is always `frames_15m.len() - 1`; move the last frame out instead of cloning it.
-        let latest_frame = dataset
-            .frames_15m
-            .pop()
-            .ok_or_else(|| anyhow::anyhow!("at least one closed 15m candle is required"))?;
-
-        Ok(MachineResponse {
-            action,
-            decision,
-            plan,
-            diagnostics: MachineDiagnostics {
-                as_of: latest_frame.candle.close_time,
-                latest_frame,
-                effective_config: config,
-                overlay,
-            },
+    /// Flatten the **last** prepared bar and return [`IndicatorValueReport`] for a **single** catalog path.
+    ///
+    /// `indicator_path` must match a leaf key exactly (same string as in `GET /v1/catalog` / `evaluate_multi` filters).
+    pub fn evaluate_indicator(
+        &self,
+        indicator_path: &str,
+        request: MachineRequest,
+    ) -> Result<IndicatorEvaluateResponse, EvaluateIndicatorError> {
+        let ctx = self
+            .build_evaluation_context(request)
+            .map_err(EvaluateIndicatorError::Dataset)?;
+        let index = ctx.dataset.frames.len().checked_sub(1).ok_or_else(|| {
+            EvaluateIndicatorError::Dataset(anyhow::anyhow!(
+                "at least one closed candle is required"
+            ))
+        })?;
+        let frame = &ctx.dataset.frames[index];
+        let v =
+            serde_json::to_value(frame).map_err(|e| EvaluateIndicatorError::Dataset(e.into()))?;
+        let mut flat = BTreeMap::new();
+        crate::catalog::flatten_object_leaves("", &v, &mut flat);
+        let value = flat
+            .get(indicator_path)
+            .ok_or_else(|| EvaluateIndicatorError::Unknown {
+                path: indicator_path.to_string(),
+            })?;
+        let bars_available = ctx.dataset.frames.len();
+        let report = indicator_value_report(indicator_path, value, bars_available, &ctx.config);
+        Ok(IndicatorEvaluateResponse {
+            path: indicator_path.to_string(),
+            report,
         })
+    }
+
+    /// Replay one or more indicator dot-paths across a bar window.
+    ///
+    /// `paths` must be non-empty; each string must match an exact catalog dot-path. Unknown paths
+    /// are reported per-step in `unknown_paths` (not an error) so callers can detect typos.
+    pub fn evaluate_indicator_replay(
+        &self,
+        paths: &[&str],
+        req: IndicatorReplayRequest,
+    ) -> Result<IndicatorReplayResponse, EvaluateIndicatorError> {
+        if paths.is_empty() {
+            return Err(EvaluateIndicatorError::Dataset(anyhow::anyhow!(
+                "at least one indicator path is required"
+            )));
+        }
+        let from_idx = req.from_index.unwrap_or(0);
+        let to_idx_raw = req.to_index;
+        let step = req.step.unwrap_or(1).max(1);
+        let ctx = self
+            .build_evaluation_context(req.machine)
+            .map_err(EvaluateIndicatorError::Dataset)?;
+        let bar_count = ctx.dataset.frames.len();
+        let last = bar_count.checked_sub(1).ok_or_else(|| {
+            EvaluateIndicatorError::Dataset(anyhow::anyhow!(
+                "at least one closed candle is required"
+            ))
+        })?;
+        let mut to_idx = to_idx_raw.unwrap_or(last);
+        if to_idx > last {
+            to_idx = last;
+        }
+        if from_idx > to_idx {
+            return Err(EvaluateIndicatorError::Dataset(anyhow::anyhow!(
+                "from_index ({from_idx}) must be <= to_index ({to_idx}) after clamping to bar_count-1 ({last})"
+            )));
+        }
+        if from_idx >= bar_count {
+            return Err(EvaluateIndicatorError::Dataset(anyhow::anyhow!(
+                "from_index ({from_idx}) must be < bar_count ({bar_count})"
+            )));
+        }
+        let span = to_idx - from_idx;
+        let estimated = span / step + 1;
+        if estimated > MAX_REPLAY_STEPS {
+            return Err(EvaluateIndicatorError::Dataset(anyhow::anyhow!(
+                "replay would emit roughly {estimated} steps (from_index={from_idx}, to_index={to_idx}, step={step}; max {MAX_REPLAY_STEPS})"
+            )));
+        }
+
+        let mut steps = Vec::with_capacity(estimated);
+        let mut i = from_idx;
+        while i <= to_idx {
+            let frame = &ctx.dataset.frames[i];
+            let close_time = frame.candle.close_time;
+            let v = serde_json::to_value(frame)
+                .map_err(|e| EvaluateIndicatorError::Dataset(e.into()))?;
+            let mut flat = BTreeMap::new();
+            crate::catalog::flatten_object_leaves("", &v, &mut flat);
+            let mut indicators = BTreeMap::new();
+            let mut unknown_paths = Vec::new();
+            for &path in paths {
+                match flat.get(path) {
+                    Some(value) => {
+                        let report = indicator_value_report(path, value, bar_count, &ctx.config);
+                        indicators.insert(path.to_string(), report);
+                    }
+                    None => unknown_paths.push(path.to_string()),
+                }
+            }
+            steps.push(IndicatorReplayStep {
+                bar_index: i,
+                close_time,
+                indicators,
+                unknown_paths,
+            });
+            i = i.saturating_add(step);
+        }
+        Ok(IndicatorReplayResponse { steps })
+    }
+
+    fn build_evaluation_context(&self, request: MachineRequest) -> Result<EvaluationContext> {
+        let (config, dataset) = merge_request_and_build_dataset(&self.base_config, request)?;
+        Ok(EvaluationContext { config, dataset })
     }
 }
 
-fn build_plan(
+fn merge_request_and_build_dataset(
+    base_config: &StrategyConfig,
+    request: MachineRequest,
+) -> Result<(StrategyConfig, PreparedDataset)> {
+    let MachineRequest {
+        candles,
+        bar_interval: _,
+        macro_events,
+        runtime_state: _,
+        account_equity: _,
+        symbol_filters,
+        config_overrides,
+    } = request;
+
+    let mut config = base_config.clone();
+
+    if let Some(filters) = symbol_filters {
+        config = config.with_symbol_filters(filters);
+    }
+
+    if let Some(ov) = &config_overrides {
+        if let Some(v) = ov.min_target_move_pct {
+            config.min_target_move_pct = v;
+        }
+        if let Some(v) = ov.stop_atr_multiple {
+            config.stop_atr_multiple = v;
+        }
+        if let Some(v) = ov.target_atr_multiple {
+            config.target_atr_multiple = v;
+        }
+        if let Some(v) = ov.runway_lookback {
+            config.runway_lookback = v;
+        }
+        if let Some(v) = ov.ema_fast_period {
+            config.ema_fast_period = v;
+        }
+        if let Some(v) = ov.ema_slow_period {
+            config.ema_slow_period = v;
+        }
+        if let Some(v) = ov.low_vol_enabled {
+            config.low_vol_enabled = v;
+        }
+        if let Some(v) = ov.high_vol_ratio {
+            config.high_vol_ratio = v;
+        }
+        if let Some(v) = ov.breakout_lookback {
+            config.breakout_lookback = v;
+        }
+        if let Some(v) = ov.failed_acceptance_lookback_bars {
+            config.failed_acceptance_lookback_bars = v;
+        }
+        if let Some(v) = ov.trend_confirm_bars {
+            config.trend_confirm_bars = v;
+        }
+        if let Some(v) = ov.vp_enabled {
+            config.vp_enabled = v;
+        }
+        if let Some(v) = ov.vp_lookback_bars {
+            config.vp_lookback_bars = v;
+        }
+        if let Some(v) = ov.vp_value_area_ratio {
+            config.vp_value_area_ratio = v;
+        }
+        if let Some(v) = ov.vp_bin_count {
+            config.vp_bin_count = v;
+        }
+        if let Some(v) = ov.strategy_id.as_ref() {
+            config.strategy_id = v.clone();
+        }
+        if let Some(v) = ov.vwap_anchor_mode {
+            config.vwap_anchor_mode = v;
+        }
+        if let Some(v) = ov.vwap_rolling_bars {
+            config.vwap_rolling_bars = Some(v);
+        }
+        if let Some(v) = ov.higher_tf_factor {
+            config.higher_tf_factor = v;
+        }
+    }
+
+    let dataset = PreparedDataset::build(&config, candles, macro_events)?;
+    Ok((config, dataset))
+}
+
+fn indicator_value_report(
+    path: &str,
+    value: &JsonValue,
+    bars_available: usize,
     config: &StrategyConfig,
-    decision: &SignalDecision,
-    account_equity: Option<f64>,
-) -> Option<PositionPlan> {
-    if !decision.allowed {
-        return None;
+) -> IndicatorValueReport {
+    let min = crate::catalog::min_bars_required_for_path(path, config);
+    let path_note = crate::catalog::path_note(path);
+    let has_signal = !value.is_null();
+    let warmup_ok = min
+        .map(|m| bars_available >= usize::try_from(m).unwrap_or(usize::MAX))
+        .unwrap_or(true);
+    let computable = warmup_ok && has_signal;
+    IndicatorValueReport {
+        value: value.clone(),
+        computable,
+        min_bars_required: min,
+        bars_available,
+        path_note,
     }
-
-    let trigger_price = decision.trigger_price?;
-    let atr = decision.atr?;
-    if atr <= 0.0 {
-        return None;
-    }
-
-    Some(build_position_plan(
-        config,
-        trigger_price,
-        atr,
-        account_equity,
-    ))
 }
 
 #[cfg(test)]
 mod tests {
     use chrono::{Duration, TimeZone, Utc};
 
-    use super::{DecisionMachine, MachineAction, MachineRequest, RuntimeState};
-    use crate::domain::{Candle, MacroEvent, MacroEventClass};
+    use super::{DecisionMachine, MachineRequest, RuntimeState};
+    use crate::domain::Candle;
 
     #[test]
     fn capabilities_are_explicitly_execution_free() {
         let machine = DecisionMachine::default();
         let capabilities = machine.capabilities();
         assert!(!capabilities.execution_enabled);
-        assert!(
-            capabilities
-                .supported_actions
-                .iter()
-                .any(|value| value == "arm_long_stop")
-        );
+        assert!(capabilities
+            .supported_actions
+            .iter()
+            .any(|value| value == "arm_long_stop"));
     }
 
     #[test]
-    fn insufficient_history_blocks_entries() {
+    fn evaluate_indicator_matches_single_catalog_path() {
         let machine = DecisionMachine::default();
         let base_time = Utc
             .with_ymd_and_hms(2026, 4, 15, 0, 15, 0)
             .single()
             .expect("time");
-        let request = MachineRequest {
-            candles_15m: vec![Candle {
-                close_time: base_time,
+        let candles: Vec<Candle> = (0..96)
+            .map(|index| Candle {
+                close_time: base_time + Duration::minutes(15 * index as i64),
+                open: 100.0 + index as f64 * 0.1,
+                high: 101.0 + index as f64 * 0.1,
+                low: 99.5 + index as f64 * 0.1,
+                close: 100.7 + index as f64 * 0.1,
+                volume: 10.0 + index as f64,
+                buy_volume: Some(6.0 + index as f64 * 0.1),
+                sell_volume: Some(4.0 + index as f64 * 0.1),
+                delta: None,
+            })
+            .collect();
+
+        let req = MachineRequest {
+            candles,
+            bar_interval: None,
+            macro_events: Vec::new(),
+            runtime_state: RuntimeState::default(),
+            account_equity: Some(100_000.0),
+            symbol_filters: None,
+            config_overrides: None,
+        };
+
+        let out = machine
+            .evaluate_indicator("ema_fast", req)
+            .expect("indicator");
+        assert_eq!(out.path, "ema_fast");
+        assert!(out.report.computable);
+        assert_eq!(out.report.bars_available, 96);
+    }
+
+    #[test]
+    fn evaluate_indicator_unknown_path_errors() {
+        let machine = DecisionMachine::default();
+        let base_time = Utc
+            .with_ymd_and_hms(2026, 4, 15, 0, 15, 0)
+            .single()
+            .expect("time");
+        let candles: Vec<Candle> = (0..96)
+            .map(|index| Candle {
+                close_time: base_time + Duration::minutes(15 * index as i64),
                 open: 100.0,
                 high: 101.0,
                 low: 99.0,
@@ -317,119 +533,34 @@ mod tests {
                 buy_volume: Some(6.0),
                 sell_volume: Some(4.0),
                 delta: None,
-            }],
+            })
+            .collect();
+        let req = MachineRequest {
+            candles,
+            bar_interval: None,
             macro_events: Vec::new(),
             runtime_state: RuntimeState::default(),
-            account_equity: Some(100_000.0),
+            account_equity: None,
             symbol_filters: None,
-            rustyfish_overlay: None,
             config_overrides: None,
         };
-
-        let result = machine.evaluate(request);
-        assert!(result.is_err());
-
-        let long_enough_request = MachineRequest {
-            candles_15m: (0..96)
-                .map(|index| Candle {
-                    close_time: base_time + Duration::minutes(15 * index as i64),
-                    open: 100.0 + index as f64 * 0.1,
-                    high: 101.0 + index as f64 * 0.1,
-                    low: 99.5 + index as f64 * 0.1,
-                    close: 100.7 + index as f64 * 0.1,
-                    volume: 10.0 + index as f64,
-                    buy_volume: Some(6.0 + index as f64 * 0.1),
-                    sell_volume: Some(4.0 + index as f64 * 0.1),
-                    delta: None,
-                })
-                .collect(),
-            macro_events: Vec::new(),
-            runtime_state: RuntimeState::default(),
-            account_equity: Some(100_000.0),
-            symbol_filters: None,
-            rustyfish_overlay: None,
-            config_overrides: None,
-        };
-
-        let response = machine
-            .evaluate(long_enough_request)
-            .expect("machine response");
-        assert!(matches!(
-            response.action,
-            MachineAction::StandAside | MachineAction::ArmLongStop
-        ));
+        let err = machine
+            .evaluate_indicator("not_a_catalog_leaf", req)
+            .expect_err("unknown");
+        assert!(matches!(err, super::EvaluateIndicatorError::Unknown { .. }));
     }
 
     #[test]
-    fn simulated_request_hits_macro_veto_and_returns_decision_package() {
-        let machine = DecisionMachine::default();
-        let base_time = Utc
-            .with_ymd_and_hms(2026, 4, 15, 0, 15, 0)
-            .single()
-            .expect("time");
-
-        let candles_15m: Vec<Candle> = (0..970)
-            .map(|index| {
-                let trend = index as f64 * 0.8;
-                let close = 80_000.0 + trend + if index == 969 { 3.0 } else { 0.0 };
-                let open = close - if index == 969 { 2.0 } else { 1.0 };
-                let high = close + 4.0;
-                let low = if index == 969 {
-                    close - 6.0
-                } else {
-                    open - 2.0
-                };
-                Candle {
-                    close_time: base_time + Duration::minutes(15 * index as i64),
-                    open,
-                    high,
-                    low,
-                    close,
-                    volume: 100.0 + index as f64 * 0.2,
-                    buy_volume: Some(60.0 + index as f64 * 0.1),
-                    sell_volume: Some(40.0 + index as f64 * 0.05),
-                    delta: None,
-                }
-            })
-            .collect();
-
-        let latest_close_time = candles_15m.last().expect("latest candle").close_time;
-
-        let request = MachineRequest {
-            candles_15m,
-            macro_events: vec![MacroEvent {
-                event_time: latest_close_time + Duration::minutes(10),
-                class: MacroEventClass::Cpi,
-            }],
-            runtime_state: RuntimeState::default(),
-            account_equity: Some(100_000.0),
-            symbol_filters: None,
-            rustyfish_overlay: None,
-            config_overrides: None,
-        };
-
-        let request_json = serde_json::to_string(&request).expect("serialize request");
-        let parsed_request: MachineRequest =
-            serde_json::from_str(&request_json).expect("deserialize request");
-
-        let response = machine.evaluate(parsed_request).expect("machine response");
-        assert!(matches!(response.action, MachineAction::StandAside));
-        assert!(!response.decision.allowed);
-        assert!(
-            response
-                .decision
-                .reasons
-                .iter()
-                .any(|reason| reason == "macro_veto")
-        );
-        assert!(response.plan.is_none());
-        assert_eq!(response.diagnostics.as_of, latest_close_time);
-
-        let response_json = serde_json::to_value(&response).expect("serialize response");
-        assert_eq!(response_json["action"], "stand_aside");
-        assert_eq!(
-            response_json["diagnostics"]["as_of"].as_i64(),
-            Some(latest_close_time.timestamp_millis())
-        );
+    fn machine_request_accepts_candles_alias() {
+        let json = r#"{
+            "candles": [],
+            "macro_events": [],
+            "runtime_state": {"realized_net_r_today": 0.0, "halt_new_entries_flag": 0},
+            "account_equity": null,
+            "symbol_filters": null,
+            "config_overrides": null
+        }"#;
+        let parsed: MachineRequest = serde_json::from_str(json).expect("parse");
+        assert!(parsed.candles.is_empty());
     }
 }

@@ -57,10 +57,19 @@ pub struct StrategyConfig {
     /// When false, VWAP at bar *i* excludes bar *i* volume (rare for closed candles).
     #[serde(default = "default_vwap_include_current_bar")]
     pub vwap_include_current_bar: bool,
+    /// How many base bars roll up into one higher-timeframe bar for the `ema_fast_higher` /
+    /// `ema_slow_higher` fields. `4` means every 4 consecutive base bars = 1 higher-TF bar
+    /// (e.g. four 15 m bars → one 1 h bar). Set to `1` or `0` to disable higher-TF EMAs.
+    #[serde(default = "default_higher_tf_factor")]
+    pub higher_tf_factor: usize,
 }
 
 fn default_vwap_include_current_bar() -> bool {
     true
+}
+
+fn default_higher_tf_factor() -> usize {
+    4
 }
 
 fn default_strategy_id() -> String {
@@ -96,6 +105,7 @@ impl Default for StrategyConfig {
             vwap_anchor_mode: VwapAnchorMode::UtcDay,
             vwap_rolling_bars: None,
             vwap_include_current_bar: true,
+            higher_tf_factor: 4,
         }
     }
 }

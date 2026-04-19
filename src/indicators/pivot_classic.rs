@@ -1,4 +1,10 @@
 //! Classic daily pivots from the **prior** UTC calendar day H/L/C.
+//!
+//! **Timeframe notes:**
+//! - Sub-daily bars (1m–4h): aggregates all bars in a UTC day and uses the prior day's H/L/C. ✓
+//! - Daily bars: each bar is one UTC day; uses the prior bar's H/L/C. ✓
+//! - Weekly+ bars: `pred_opt()` on the bar's date gives a day not present in the map →
+//!   all values are `None`. Pivots are not meaningful at that resolution.
 
 use std::collections::BTreeMap;
 

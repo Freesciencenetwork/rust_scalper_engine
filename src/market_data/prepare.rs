@@ -3,7 +3,7 @@ use anyhow::{Result, bail};
 use crate::config::StrategyConfig;
 use crate::domain::{Candle, MacroEvent};
 use crate::indicators::{
-    ad_line_series, adx_series, aggregate_15m_to_1h, alma_series, aroon_series, atr_series,
+    ad_line_series, adx_series, aggregate_to_higher_tf, alma_series, aroon_series, atr_series,
     awesome_oscillator_series, bollinger_bandwidth_series, bollinger_pct_b_series,
     bollinger_series, candlestick_pattern_series, cci_series, chaikin_oscillator_series,
     chandelier_exit_series, cmf_series, cmo_series, dema_series, donchian_series, elder_ray_series,
@@ -28,7 +28,7 @@ use super::snapshot::{
 impl PreparedDataset {
     pub fn build(
         config: &StrategyConfig,
-        candles_15m: Vec<Candle>,
+        candles: Vec<Candle>,
         macro_events: Vec<MacroEvent>,
     ) -> Result<Self> {
         let min_candles = config.vwma_lookback.max(if config.vp_enabled {
@@ -36,35 +36,46 @@ impl PreparedDataset {
         } else {
             1
         });
-        if candles_15m.len() < min_candles {
+        if candles.len() < min_candles {
             bail!(
-                "need at least {} 15m candles to compute indicators (vwma / volume profile)",
+                "need at least {} candles to compute indicators (vwma / volume profile)",
                 min_candles
             );
         }
 
-        let one_hour = aggregate_15m_to_1h(&candles_15m)?;
-        let closes_15m: Vec<f64> = candles_15m.iter().map(|candle| candle.close).collect();
-        let ema_fast_15m = ema_series(&closes_15m, config.ema_fast_period);
-        let ema_slow_15m = ema_series(&closes_15m, config.ema_slow_period);
-        let atr_15m = atr_series(&candles_15m, config.atr_period);
-        let vwma_15m = vwma_series(&candles_15m, config.vwma_lookback);
+        let higher_tf_candles = if config.higher_tf_factor > 1 {
+            aggregate_to_higher_tf(&candles, config.higher_tf_factor).ok()
+        } else {
+            None
+        };
 
-        let deltas: Vec<f64> = candles_15m
+        let closes: Vec<f64> = candles.iter().map(|candle| candle.close).collect();
+        let ema_fast = ema_series(&closes, config.ema_fast_period);
+        let ema_slow = ema_series(&closes, config.ema_slow_period);
+        let atr_series_data = atr_series(&candles, config.atr_period);
+        let vwma = vwma_series(&candles, config.vwma_lookback);
+
+        let deltas: Vec<f64> = candles
             .iter()
             .map(|candle| candle.inferred_delta().unwrap_or(0.0))
             .collect();
         let cvd = cumulative_sum(&deltas);
         let cvd_ema3 = ema_series(&cvd, 3);
 
-        let closes_1h: Vec<f64> = one_hour.iter().map(|candle| candle.close).collect();
-        let ema_fast_1h = ema_series(&closes_1h, config.ema_fast_period);
-        let ema_slow_1h = ema_series(&closes_1h, config.ema_slow_period);
+        let (ema_fast_higher, ema_slow_higher) = if let Some(ref htf) = higher_tf_candles {
+            let closes_htf: Vec<f64> = htf.iter().map(|c| c.close).collect();
+            (
+                ema_series(&closes_htf, config.ema_fast_period),
+                ema_series(&closes_htf, config.ema_slow_period),
+            )
+        } else {
+            (Vec::new(), Vec::new())
+        };
 
-        let atr_pct_values: Vec<f64> = candles_15m
+        let atr_pct_values: Vec<f64> = candles
             .iter()
             .enumerate()
-            .map(|(index, candle)| match atr_15m[index] {
+            .map(|(index, candle)| match atr_series_data[index] {
                 Some(atr) if candle.close > 0.0 => atr / candle.close,
                 _ => 0.0,
             })
@@ -72,91 +83,94 @@ impl PreparedDataset {
         let atr_pct_baseline = rolling_median(&atr_pct_values, config.vol_baseline_lookback_bars);
 
         // Library indicators (one-shot series for whole history)
-        let rsi_14 = rsi_series(&closes_15m, 14);
-        let macd = macd_series(&closes_15m, 12, 26, 9);
-        let bb = bollinger_series(&closes_15m, 20, 2.0);
-        let stoch = stochastic_series(&candles_15m, 14, 3);
-        let sma_20 = sma_series(&closes_15m, 20);
-        let sma_50 = sma_series(&closes_15m, 50);
-        let sma_200 = sma_series(&closes_15m, 200);
-        let obv = obv_series(&candles_15m);
-        let adx = adx_series(&candles_15m, 14);
-        let cci_20 = cci_series(&candles_15m, 20);
-        let williams_r_14 = williams_r_series(&candles_15m, 14);
-        let roc_10 = roc_series(&closes_15m, 10);
-        let mfi_14 = mfi_series(&candles_15m, 14);
-        let ultosc = ultimate_oscillator_series(&candles_15m);
-        let tsi_25_13 = tsi_series(&closes_15m, 25, 13);
-        let ema_20 = ema_series(&closes_15m, 20);
-        let wma_20 = wma_series(&closes_15m, 20);
-        let hull_9 = hull_ma_series(&closes_15m, 9);
-        let keltner = keltner_series(&candles_15m, 20, 14, 2.0);
-        let donchian = donchian_series(&candles_15m, 20);
-        let aroon = aroon_series(&candles_15m, 25);
+        let rsi_14 = rsi_series(&closes, 14);
+        let macd = macd_series(&closes, 12, 26, 9);
+        let bb = bollinger_series(&closes, 20, 2.0);
+        let stoch = stochastic_series(&candles, 14, 3);
+        let sma_20 = sma_series(&closes, 20);
+        let sma_50 = sma_series(&closes, 50);
+        let sma_200 = sma_series(&closes, 200);
+        let obv = obv_series(&candles);
+        let adx = adx_series(&candles, 14);
+        let cci_20 = cci_series(&candles, 20);
+        let williams_r_14 = williams_r_series(&candles, 14);
+        let roc_10 = roc_series(&closes, 10);
+        let mfi_14 = mfi_series(&candles, 14);
+        let ultosc = ultimate_oscillator_series(&candles);
+        let tsi_25_13 = tsi_series(&closes, 25, 13);
+        let ema_20 = ema_series(&closes, 20);
+        let wma_20 = wma_series(&closes, 20);
+        let hull_9 = hull_ma_series(&closes, 9);
+        let keltner = keltner_series(&candles, 20, 14, 2.0);
+        let donchian = donchian_series(&candles, 20);
+        let aroon = aroon_series(&candles, 25);
 
-        let highs_15m: Vec<f64> = candles_15m.iter().map(|c| c.high).collect();
-        let lows_15m: Vec<f64> = candles_15m.iter().map(|c| c.low).collect();
-        let ad_line = ad_line_series(&candles_15m);
-        let cmf_20 = cmf_series(&candles_15m, 20);
-        let volume_sma_20 = volume_sma_series(&candles_15m, 20);
-        let volume_ema_20 = volume_ema_series(&candles_15m, 20);
-        let bb_pct_b = bollinger_pct_b_series(&bb, &closes_15m);
+        let highs: Vec<f64> = candles.iter().map(|c| c.high).collect();
+        let lows: Vec<f64> = candles.iter().map(|c| c.low).collect();
+        let ad_line = ad_line_series(&candles);
+        let cmf_20 = cmf_series(&candles, 20);
+        let volume_sma_20 = volume_sma_series(&candles, 20);
+        let volume_ema_20 = volume_ema_series(&candles, 20);
+        let bb_pct_b = bollinger_pct_b_series(&bb, &closes);
         let bb_bandwidth = bollinger_bandwidth_series(&bb);
-        let (stoch_rsi_k, stoch_rsi_d) = stochastic_rsi_series(&closes_15m, 14, 14, 3, 3);
-        let awesome = awesome_oscillator_series(&candles_15m);
-        let ppo = ppo_series(&closes_15m, 12, 26, 9);
-        let psar = parabolic_sar_series(&highs_15m, &lows_15m, &closes_15m, 0.02, 0.02, 0.2);
-        let supertrend = supertrend_series(&candles_15m, 10, 3.0);
+        let (stoch_rsi_k, stoch_rsi_d) = stochastic_rsi_series(&closes, 14, 14, 3, 3);
+        let awesome = awesome_oscillator_series(&candles);
+        let ppo = ppo_series(&closes, 12, 26, 9);
+        let psar = parabolic_sar_series(&highs, &lows, &closes, 0.02, 0.02, 0.2);
+        let supertrend = supertrend_series(&candles, 10, 3.0);
         let vwap_bars = vwap_bands_series(
-            &candles_15m,
+            &candles,
             config.vwap_anchor_mode,
             config.vwap_rolling_bars,
             config.vwap_include_current_bar,
         );
-        let ichimoku = ichimoku_series(&candles_15m);
-        let pivot_classic = pivot_classic_series(&candles_15m);
-        let pivot_fib = pivot_fib_series(&candles_15m);
-        let dema_20 = dema_series(&closes_15m, 20);
-        let tema_20 = tema_series(&closes_15m, 20);
-        let mcginley_14 = mcginley_series(&closes_15m, 14);
-        let kst = kst_series(&closes_15m);
-        let (elder_bull, elder_bear) = elder_ray_series(&candles_15m, 13);
-        let mass_index_25 = mass_index_series(&candles_15m, 9, 25);
+        let ichimoku = ichimoku_series(&candles);
+        let pivot_classic = pivot_classic_series(&candles);
+        let pivot_fib = pivot_fib_series(&candles);
+        let dema_20 = dema_series(&closes, 20);
+        let tema_20 = tema_series(&closes, 20);
+        let mcginley_14 = mcginley_series(&closes, 14);
+        let kst = kst_series(&closes);
+        let (elder_bull, elder_bear) = elder_ray_series(&candles, 13);
+        let mass_index_25 = mass_index_series(&candles, 9, 25);
 
-        let vols_15m: Vec<f64> = candles_15m.iter().map(|c| c.volume).collect();
-        let cmo_14 = cmo_series(&closes_15m, 14);
-        let (trix_15, trix_signal_9) = trix_series(&closes_15m, 15, 9);
-        let (kvo_line, kvo_signal) = kvo_series(&candles_15m, 34, 55, 13);
+        let vols: Vec<f64> = candles.iter().map(|c| c.volume).collect();
+        let cmo_14 = cmo_series(&closes, 14);
+        let (trix_15, trix_signal_9) = trix_series(&closes, 15, 9);
+        let (kvo_line, kvo_signal) = kvo_series(&candles, 34, 55, 13);
         let chaikin_osc = chaikin_oscillator_series(&ad_line, 3, 10);
-        let pvo = pvo_series(&vols_15m, 12, 26, 9);
-        let force_13 = force_index_series(&candles_15m, 13);
-        let (nvi, pvi) = nvi_pvi_series(&closes_15m, &vols_15m);
-        let vortex_14 = vortex_series(&candles_15m, 14);
-        let ttm_sq = ttm_squeeze_series(&candles_15m);
-        let chandelier = chandelier_exit_series(&candles_15m, 22, 14, 3.0);
-        let kama_er10 = kama_series(&closes_15m, 10);
-        let alma_20 = alma_series(&closes_15m, 20, 0.85, 6.0);
-        let vidya_14 = vidya_series(&closes_15m, 14);
-        let mama_fama = mama_fama_series(&candles_15m, 0.5, 0.05);
-        let lr_slope_20 = linear_regression_slope_series(&closes_15m, 20);
-        let zscore_20 = zscore_series(&closes_15m, 20);
-        let hist_vol_20 = hist_vol_log_returns_series(&closes_15m, 20);
-        let patterns = candlestick_pattern_series(&candles_15m);
+        let pvo = pvo_series(&vols, 12, 26, 9);
+        let force_13 = force_index_series(&candles, 13);
+        let (nvi, pvi) = nvi_pvi_series(&closes, &vols);
+        let vortex_14 = vortex_series(&candles, 14);
+        let ttm_sq = ttm_squeeze_series(&candles);
+        let chandelier = chandelier_exit_series(&candles, 22, 14, 3.0);
+        let kama_er10 = kama_series(&closes, 10);
+        let alma_20 = alma_series(&closes, 20, 0.85, 6.0);
+        let vidya_14 = vidya_series(&closes, 14);
+        let mama_fama = mama_fama_series(&candles, 0.5, 0.05);
+        let lr_slope_20 = linear_regression_slope_series(&closes, 20);
+        let zscore_20 = zscore_series(&closes, 20);
+        let hist_vol_20 = hist_vol_log_returns_series(&closes, 20);
+        let patterns = candlestick_pattern_series(&candles);
 
         let mut hour_pointer = 0usize;
-        let mut frames_15m = Vec::with_capacity(candles_15m.len());
-        for index in 0..candles_15m.len() {
-            while hour_pointer + 1 < one_hour.len()
-                && one_hour[hour_pointer + 1].close_time <= candles_15m[index].close_time
-            {
-                hour_pointer += 1;
+        let mut frames = Vec::with_capacity(candles.len());
+        for index in 0..candles.len() {
+            if let Some(ref htf) = higher_tf_candles {
+                while hour_pointer + 1 < htf.len()
+                    && htf[hour_pointer + 1].close_time <= candles[index].close_time
+                {
+                    hour_pointer += 1;
+                }
             }
 
-            let hour_ready = one_hour
-                .get(hour_pointer)
-                .filter(|hour_candle| hour_candle.close_time <= candles_15m[index].close_time);
+            let hour_ready = higher_tf_candles.as_ref().and_then(|htf| {
+                htf.get(hour_pointer)
+                    .filter(|hc| hc.close_time <= candles[index].close_time)
+            });
 
-            let atr_pct = atr_15m[index].map(|atr| atr / candles_15m[index].close);
+            let atr_pct = atr_series_data[index].map(|atr| atr / candles[index].close);
             let baseline = atr_pct_baseline[index];
             let vol_ratio = match (atr_pct, baseline) {
                 (Some(current), Some(base)) if base > 0.0 => Some(current / base),
@@ -168,7 +182,7 @@ impl PreparedDataset {
                 && config.vp_bin_count >= 2
             {
                 match volume_profile_zones(
-                    &candles_15m,
+                    &candles,
                     index,
                     config.vp_lookback_bars,
                     config.vp_bin_count,
@@ -317,14 +331,14 @@ impl PreparedDataset {
                 doji: pat.doji,
             };
 
-            frames_15m.push(PreparedCandle {
-                candle: candles_15m[index].clone(),
-                ema_fast_15m: Some(ema_fast_15m[index]),
-                ema_slow_15m: Some(ema_slow_15m[index]),
-                ema_fast_1h: hour_ready.map(|_| ema_fast_1h[hour_pointer]),
-                ema_slow_1h: hour_ready.map(|_| ema_slow_1h[hour_pointer]),
-                vwma_15m: vwma_15m[index],
-                atr_15m: atr_15m[index],
+            frames.push(PreparedCandle {
+                candle: candles[index].clone(),
+                ema_fast: Some(ema_fast[index]),
+                ema_slow: Some(ema_slow[index]),
+                ema_fast_higher: hour_ready.map(|_| ema_fast_higher[hour_pointer]),
+                ema_slow_higher: hour_ready.map(|_| ema_slow_higher[hour_pointer]),
+                vwma: vwma[index],
+                atr: atr_series_data[index],
                 atr_pct,
                 atr_pct_baseline: baseline,
                 vol_ratio,
@@ -350,7 +364,7 @@ impl PreparedDataset {
         }
 
         Ok(Self {
-            frames_15m,
+            frames,
             macro_events,
         })
     }

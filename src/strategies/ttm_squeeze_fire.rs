@@ -29,7 +29,7 @@ impl TtmSqueezeFireEngine {
     }
 
     pub fn evaluate_signal(&self, index: usize, dataset: &PreparedDataset) -> SignalDecision {
-        let frame = &dataset.frames_15m[index];
+        let frame = &dataset.frames[index];
         let trigger_price = buy_stop_trigger_price(frame.candle.high, self.config.tick_size);
 
         let (mut reasons, regime) = common_veto_reasons(
@@ -46,7 +46,7 @@ impl TtmSqueezeFireEngine {
                 reasons,
                 regime: Some(regime),
                 trigger_price: Some(trigger_price),
-                atr: frame.atr_15m,
+                atr: frame.atr,
             };
         }
 
@@ -61,8 +61,8 @@ impl TtmSqueezeFireEngine {
         }
 
         let ema_up = frame
-            .ema_fast_15m
-            .zip(frame.ema_slow_15m)
+            .ema_fast
+            .zip(frame.ema_slow)
             .is_some_and(|(fast, slow)| fast > slow);
         if !ema_up {
             reasons.push("ema_fast_not_above_slow".to_string());
@@ -71,7 +71,7 @@ impl TtmSqueezeFireEngine {
         if index < 1 {
             reasons.push("ttm_squeeze_fire_needs_prior_bar".to_string());
         } else {
-            let prev_vol = &dataset.frames_15m[index - 1].indicator_snapshot.volatility;
+            let prev_vol = &dataset.frames[index - 1].indicator_snapshot.volatility;
             let vol = &frame.indicator_snapshot.volatility;
             let release =
                 prev_vol.ttm_squeeze_on == Some(true) && vol.ttm_squeeze_on == Some(false);
@@ -89,7 +89,7 @@ impl TtmSqueezeFireEngine {
             reasons,
             regime: Some(regime),
             trigger_price: Some(trigger_price),
-            atr: frame.atr_15m,
+            atr: frame.atr,
         }
     }
 }
