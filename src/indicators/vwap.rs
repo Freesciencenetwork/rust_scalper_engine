@@ -89,8 +89,12 @@ fn utc_day_vwap(candles: &[Candle], include_current: bool, out: &mut [Option<Vwa
 
 fn rolling_vwap(candles: &[Candle], rb: usize, include_current: bool, out: &mut [Option<VwapBar>]) {
     let n = candles.len();
-    for i in 0..n {
-        let end = if include_current { i } else { i.saturating_sub(1) };
+    for (i, slot) in out.iter_mut().enumerate().take(n) {
+        let end = if include_current {
+            i
+        } else {
+            i.saturating_sub(1)
+        };
         if end + 1 < rb {
             continue;
         }
@@ -105,6 +109,6 @@ fn rolling_vwap(candles: &[Candle], rb: usize, include_current: bool, out: &mut 
             sum_wp += w * p;
             sum_wp2 += w * p * p;
         }
-        out[i] = bands_from_sums(sum_w, sum_wp, sum_wp2);
+        *slot = bands_from_sums(sum_w, sum_wp, sum_wp2);
     }
 }

@@ -35,5 +35,75 @@ pub fn active(
         }
     }
 
-    matches!(nearest_barrier, Some(barrier) if barrier - entry_price < config.stop_atr_multiple * atr)
+    let required_runway = config.target_atr_multiple * atr;
+    matches!(nearest_barrier, Some(barrier) if barrier - entry_price < required_runway)
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{Duration, TimeZone, Utc};
+
+    use super::active;
+    use crate::config::StrategyConfig;
+    use crate::domain::Candle;
+    use crate::market_data::{
+        PreparedCandle, PreparedDataset, snapshot::IndicatorSnapshot,
+    };
+
+    fn frame_at(minute: i64, high: f64, close: f64, atr: f64) -> PreparedCandle {
+        PreparedCandle {
+            candle: Candle {
+                close_time: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
+                    + Duration::minutes(minute),
+                open: close - 1.0,
+                high,
+                low: close - 2.0,
+                close,
+                volume: 1.0,
+                buy_volume: None,
+                sell_volume: None,
+                delta: None,
+            },
+            ema_fast_15m: None,
+            ema_slow_15m: None,
+            ema_fast_1h: None,
+            ema_slow_1h: None,
+            vwma_15m: None,
+            atr_15m: Some(atr),
+            atr_pct: None,
+            atr_pct_baseline: None,
+            vol_ratio: None,
+            cvd_ema3: None,
+            cvd_ema3_slope: None,
+            vp_val: None,
+            vp_poc: None,
+            vp_vah: None,
+            indicator_snapshot: IndicatorSnapshot::default(),
+        }
+    }
+
+    #[test]
+    fn no_runway_uses_target_distance_not_stop_distance() {
+        let frames = vec![
+            frame_at(0, 100.0, 99.0, 10.0),
+            frame_at(15, 101.0, 100.0, 10.0),
+            frame_at(30, 102.0, 101.0, 10.0),
+            frame_at(45, 120.0, 103.0, 10.0),
+            frame_at(60, 104.0, 103.5, 10.0),
+            frame_at(75, 103.0, 102.5, 10.0),
+            frame_at(90, 105.0, 104.0, 10.0),
+        ];
+        let dataset = PreparedDataset {
+            frames_15m: frames,
+            macro_events: Vec::new(),
+        };
+        let config = StrategyConfig {
+            runway_lookback: 6,
+            stop_atr_multiple: 2.0,
+            target_atr_multiple: 3.0,
+            ..StrategyConfig::default()
+        };
+
+        assert!(active(6, &dataset, 104.0, &config));
+    }
 }

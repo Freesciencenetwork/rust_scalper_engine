@@ -1,17 +1,20 @@
+#![allow(non_snake_case)] // Same package name as library crate (`binance_BTC`).
+#![allow(clippy::multiple_crate_versions)] // Transitive duplicates; see `lib.rs`.
+
 use std::sync::Arc;
 
 use axum::{
+    Json, Router,
     extract::State,
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
-    Json, Router,
 };
 use binance_BTC::{
     DecisionMachine, MachineCapabilities, MachineRequest, MachineResponse, StrategyConfig,
 };
 use tower_http::trace::TraceLayer;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -42,25 +45,22 @@ async fn main() -> anyhow::Result<()> {
 
 fn machine_from_env() -> DecisionMachine {
     let mut config = StrategyConfig::default();
-    if let Ok(raw) = std::env::var("VOL_BASELINE_LOOKBACK_BARS") {
-        if let Ok(n) = raw.parse::<usize>() {
-            let min = config
-                .vwma_lookback
-                .max(config.runway_lookback)
-                .max(2);
-            if n >= min {
-                config.vol_baseline_lookback_bars = n;
-                tracing::info!(
-                    vol_baseline_lookback_bars = n,
-                    "VOL_BASELINE_LOOKBACK_BARS override applied"
-                );
-            } else {
-                tracing::warn!(
-                    value = n,
-                    min,
-                    "VOL_BASELINE_LOOKBACK_BARS ignored (must be >= vwma_lookback and runway_lookback)"
-                );
-            }
+    if let Ok(raw) = std::env::var("VOL_BASELINE_LOOKBACK_BARS")
+        && let Ok(n) = raw.parse::<usize>()
+    {
+        let min = config.vwma_lookback.max(config.runway_lookback).max(2);
+        if n >= min {
+            config.vol_baseline_lookback_bars = n;
+            tracing::info!(
+                vol_baseline_lookback_bars = n,
+                "VOL_BASELINE_LOOKBACK_BARS override applied"
+            );
+        } else {
+            tracing::warn!(
+                value = n,
+                min,
+                "VOL_BASELINE_LOOKBACK_BARS ignored (must be >= vwma_lookback and runway_lookback)"
+            );
         }
     }
     DecisionMachine::new(config)
@@ -78,10 +78,7 @@ async fn evaluate(
     State(machine): State<Arc<DecisionMachine>>,
     Json(request): Json<MachineRequest>,
 ) -> Result<Json<MachineResponse>, ApiError> {
-    machine
-        .evaluate(request)
-        .map(Json)
-        .map_err(|err| ApiError(err))
+    machine.evaluate(request).map(Json).map_err(ApiError)
 }
 
 struct ApiError(anyhow::Error);

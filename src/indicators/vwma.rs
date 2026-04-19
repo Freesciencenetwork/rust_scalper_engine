@@ -56,10 +56,7 @@ mod tests {
 
     #[test]
     fn computes_volume_weighted_average() {
-        let candles = vec![
-            candle_at(0, 100.0, 1.0),
-            candle_at(15, 110.0, 3.0),
-        ];
+        let candles = vec![candle_at(0, 100.0, 1.0), candle_at(15, 110.0, 3.0)];
 
         let vwma = vwma_series(&candles, 2);
         assert_eq!(vwma[0], None);

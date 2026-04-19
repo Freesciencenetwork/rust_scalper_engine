@@ -7,8 +7,8 @@ fn smooth_last(values: &[Option<f64>], i: usize, len: usize) -> Option<f64> {
         return None;
     }
     let mut sum = 0.0;
-    for j in i + 1 - len..=i {
-        sum += values[j]?;
+    for v in &values[i + 1 - len..=i] {
+        sum += v.as_ref()?;
     }
     Some(sum / len as f64)
 }
@@ -36,11 +36,11 @@ pub fn stochastic_rsi_series(
         let mut mn = f64::INFINITY;
         let mut mx = f64::NEG_INFINITY;
         let mut ok = true;
-        for j in i + 1 - stoch_period..=i {
-            match rsi[j] {
+        for r in &rsi[i + 1 - stoch_period..=i] {
+            match r {
                 Some(v) => {
-                    mn = mn.min(v);
-                    mx = mx.max(v);
+                    mn = mn.min(*v);
+                    mx = mx.max(*v);
                 }
                 None => ok = false,
             }
@@ -50,17 +50,17 @@ pub fn stochastic_rsi_series(
         }
         let cur = rsi[i].expect("rsi");
         let denom = mx - mn;
-        raw[i] = Some(if denom.abs() < f64::EPSILON {
-            50.0
+        raw[i] = if denom.abs() < f64::EPSILON {
+            None
         } else {
-            (cur - mn) / denom * 100.0
-        });
+            Some((cur - mn) / denom * 100.0)
+        };
     }
-    for i in 0..n {
-        k_out[i] = smooth_last(&raw, i, k_smooth);
+    for (i, kslot) in k_out.iter_mut().enumerate() {
+        *kslot = smooth_last(&raw, i, k_smooth);
     }
-    for i in 0..n {
-        d_out[i] = smooth_last(&k_out, i, d_smooth);
+    for (i, dslot) in d_out.iter_mut().enumerate() {
+        *dslot = smooth_last(&k_out, i, d_smooth);
     }
     (k_out, d_out)
 }

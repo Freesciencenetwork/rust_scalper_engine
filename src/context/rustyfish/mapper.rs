@@ -22,7 +22,7 @@ pub fn map_report_to_overlay(report: &RustyFishDailyReport) -> ParameterOverlay 
 }
 
 fn clamp(value: f64) -> f64 {
-    value.max(-1.0).min(1.0)
+    value.clamp(-1.0, 1.0)
 }
 
 #[cfg(test)]

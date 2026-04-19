@@ -6,19 +6,17 @@
 use std::fs;
 use std::path::Path;
 
-use binance_BTC::{DecisionMachine, MachineAction, MachineRequest, MachineResponse, StrategyConfig};
+use binance_BTC::{
+    DecisionMachine, MachineAction, MachineRequest, MachineResponse, StrategyConfig,
+};
 use serde::Deserialize;
 
 #[derive(Debug, PartialEq)]
 enum BtcAdvice {
     /// Strategy allows a long continuation setup; `arm_long_stop` is the machine action.
-    ConsiderBuyStopSetup {
-        trigger_price: f64,
-    },
+    ConsiderBuyStopSetup { trigger_price: f64 },
     /// No new long; vetoes or risk state blocked the path.
-    DoNotBuyBtc {
-        reasons: Vec<String>,
-    },
+    DoNotBuyBtc { reasons: Vec<String> },
 }
 
 fn advice_from_response(response: &MachineResponse) -> BtcAdvice {

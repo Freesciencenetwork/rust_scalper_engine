@@ -10,7 +10,12 @@ pub struct MacdBar {
 }
 
 /// Classic 12 / 26 / 9 MACD. `None` until `slow + signal_p` bars (warm-up).
-pub fn macd_series(closes: &[f64], fast: usize, slow: usize, signal_p: usize) -> Vec<Option<MacdBar>> {
+pub fn macd_series(
+    closes: &[f64],
+    fast: usize,
+    slow: usize,
+    signal_p: usize,
+) -> Vec<Option<MacdBar>> {
     let n = closes.len();
     let mut out = vec![None; n];
     if fast == 0 || slow == 0 || signal_p == 0 || n == 0 {

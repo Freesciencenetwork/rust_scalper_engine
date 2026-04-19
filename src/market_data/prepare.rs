@@ -3,21 +3,26 @@ use anyhow::{Result, bail};
 use crate::config::StrategyConfig;
 use crate::domain::{Candle, MacroEvent};
 use crate::indicators::{
-    ad_line_series, adx_series, aggregate_15m_to_1h, aroon_series, atr_series,
-    awesome_oscillator_series, bollinger_bandwidth_series, bollinger_pct_b_series, bollinger_series,
-    cci_series, cmf_series, dema_series, donchian_series, elder_ray_series, ema_series,
-    hull_ma_series, ichimoku_series, keltner_series, kst_series, macd_series, mass_index_series,
-    mcginley_series, mfi_series, obv_series, parabolic_sar_series, pivot_classic_series,
-    pivot_fib_series, ppo_series, roc_series, rolling_median, rsi_series, sma_series,
-    stochastic_rsi_series, stochastic_series, supertrend_series, tema_series, tsi_series,
-    ultimate_oscillator_series, volume_ema_series, volume_profile_zones, volume_sma_series,
-    vwap_bands_series, vwma_series, williams_r_series, wma_series,
+    ad_line_series, adx_series, aggregate_15m_to_1h, alma_series, aroon_series, atr_series,
+    awesome_oscillator_series, bollinger_bandwidth_series, bollinger_pct_b_series,
+    bollinger_series, candlestick_pattern_series, cci_series, chaikin_oscillator_series,
+    chandelier_exit_series, cmf_series, cmo_series, dema_series, donchian_series, elder_ray_series,
+    ema_series, force_index_series, hist_vol_log_returns_series, hull_ma_series, ichimoku_series,
+    kama_series, keltner_series, kst_series, kvo_series, linear_regression_slope_series,
+    macd_series, mama_fama_series, mass_index_series, mcginley_series, mfi_series, nvi_pvi_series,
+    obv_series, parabolic_sar_series, pivot_classic_series, pivot_fib_series, ppo_series,
+    pvo_series, roc_series, rolling_median, rsi_series, sma_series, stochastic_rsi_series,
+    stochastic_series, supertrend_series, tema_series, trix_series, tsi_series, ttm_squeeze_series,
+    ultimate_oscillator_series, vidya_series, volume_ema_series, volume_profile_zones,
+    volume_sma_series, vortex_series, vwap_bands_series, vwma_series, williams_r_series,
+    wma_series, zscore_series,
 };
 
 use super::data::{PreparedCandle, PreparedDataset};
 use super::snapshot::{
-    DirectionalSnapshot, IchimokuSnapshot, IndicatorSnapshot, MomentumSnapshot, PivotClassicSnapshot,
-    PivotFibSnapshot, TrendSnapshot, VolatilitySnapshot, VolumeSnapshot,
+    CandlestickPatternSnapshot, DirectionalSnapshot, IchimokuSnapshot, IndicatorSnapshot,
+    MomentumSnapshot, PivotClassicSnapshot, PivotFibSnapshot, TrendSnapshot, VolatilitySnapshot,
+    VolumeSnapshot,
 };
 
 impl PreparedDataset {
@@ -26,13 +31,11 @@ impl PreparedDataset {
         candles_15m: Vec<Candle>,
         macro_events: Vec<MacroEvent>,
     ) -> Result<Self> {
-        let min_candles = config
-            .vwma_lookback
-            .max(if config.vp_enabled {
-                config.vp_lookback_bars
-            } else {
-                1
-            });
+        let min_candles = config.vwma_lookback.max(if config.vp_enabled {
+            config.vp_lookback_bars
+        } else {
+            1
+        });
         if candles_15m.len() < min_candles {
             bail!(
                 "need at least {} 15m candles to compute indicators (vwma / volume profile)",
@@ -120,6 +123,26 @@ impl PreparedDataset {
         let (elder_bull, elder_bear) = elder_ray_series(&candles_15m, 13);
         let mass_index_25 = mass_index_series(&candles_15m, 9, 25);
 
+        let vols_15m: Vec<f64> = candles_15m.iter().map(|c| c.volume).collect();
+        let cmo_14 = cmo_series(&closes_15m, 14);
+        let (trix_15, trix_signal_9) = trix_series(&closes_15m, 15, 9);
+        let (kvo_line, kvo_signal) = kvo_series(&candles_15m, 34, 55, 13);
+        let chaikin_osc = chaikin_oscillator_series(&ad_line, 3, 10);
+        let pvo = pvo_series(&vols_15m, 12, 26, 9);
+        let force_13 = force_index_series(&candles_15m, 13);
+        let (nvi, pvi) = nvi_pvi_series(&closes_15m, &vols_15m);
+        let vortex_14 = vortex_series(&candles_15m, 14);
+        let ttm_sq = ttm_squeeze_series(&candles_15m);
+        let chandelier = chandelier_exit_series(&candles_15m, 22, 14, 3.0);
+        let kama_er10 = kama_series(&closes_15m, 10);
+        let alma_20 = alma_series(&closes_15m, 20, 0.85, 6.0);
+        let vidya_14 = vidya_series(&closes_15m, 14);
+        let mama_fama = mama_fama_series(&candles_15m, 0.5, 0.05);
+        let lr_slope_20 = linear_regression_slope_series(&closes_15m, 20);
+        let zscore_20 = zscore_series(&closes_15m, 20);
+        let hist_vol_20 = hist_vol_log_returns_series(&closes_15m, 20);
+        let patterns = candlestick_pattern_series(&candles_15m);
+
         let mut hour_pointer = 0usize;
         let mut frames_15m = Vec::with_capacity(candles_15m.len());
         for index in 0..candles_15m.len() {
@@ -180,6 +203,16 @@ impl PreparedDataset {
                 kst: kst[index],
                 elder_bull: Some(elder_bull[index]),
                 elder_bear: Some(elder_bear[index]),
+                cmo_14: cmo_14[index],
+                trix_15: trix_15[index],
+                trix_signal_9: trix_signal_9[index],
+                kvo_34_55: kvo_line[index],
+                kvo_signal_13: kvo_signal[index],
+                chaikin_oscillator_3_10: chaikin_osc[index],
+                pvo_line: pvo[index].as_ref().map(|p| p.line),
+                pvo_signal: pvo[index].as_ref().map(|p| p.signal),
+                pvo_hist: pvo[index].as_ref().map(|p| p.hist),
+                force_index_13: Some(force_13[index]),
             };
             let trend = TrendSnapshot {
                 sma_20: sma_20[index],
@@ -196,6 +229,14 @@ impl PreparedDataset {
                 dema_20: dema_20.get(index).copied(),
                 tema_20: tema_20.get(index).copied(),
                 mcginley_14: mcginley_14.get(index).copied(),
+                kama_10: Some(kama_er10[index]),
+                alma_20: alma_20[index],
+                vidya_14: Some(vidya_14[index]),
+                mama: mama_fama[index].as_ref().map(|m| m.mama),
+                fama: mama_fama[index].as_ref().map(|m| m.fama),
+                lr_slope_20: lr_slope_20[index],
+                price_zscore_20: zscore_20[index],
+                hist_vol_logrets_20: hist_vol_20[index],
             };
             let iz = &ichimoku[index];
             let ichimoku_snap = IchimokuSnapshot {
@@ -242,6 +283,10 @@ impl PreparedDataset {
                 mass_index_25: mass_index_25[index],
                 pivot_classic: pivot_classic_snap,
                 pivot_fib: pivot_fib_snap,
+                ttm_squeeze_on: ttm_sq[index].as_ref().map(|t| t.squeezed),
+                ttm_squeeze_momentum: ttm_sq[index].as_ref().and_then(|t| t.momentum),
+                chandelier_long_stop_22_3: chandelier[index].as_ref().map(|c| c.long_stop),
+                chandelier_short_stop_22_3: chandelier[index].as_ref().map(|c| c.short_stop),
             };
             let directional = DirectionalSnapshot {
                 adx_14: adx[index].as_ref().map(|a| a.adx),
@@ -251,6 +296,8 @@ impl PreparedDataset {
                 aroon_down_25: aroon[index].as_ref().map(|a| a.down),
                 psar: psar[index].as_ref().map(|p| p.sar),
                 psar_trend_long: psar[index].as_ref().map(|p| p.is_long),
+                vortex_vi_plus_14: vortex_14[index].as_ref().map(|v| v.vi_plus),
+                vortex_vi_minus_14: vortex_14[index].as_ref().map(|v| v.vi_minus),
             };
             let volume = VolumeSnapshot {
                 obv: Some(obv[index]),
@@ -258,6 +305,16 @@ impl PreparedDataset {
                 cmf_20: cmf_20[index],
                 volume_sma_20: volume_sma_20[index],
                 volume_ema_20: Some(volume_ema_20[index]),
+                nvi: Some(nvi[index]),
+                pvi: Some(pvi[index]),
+            };
+            let pat = &patterns[index];
+            let patterns_snap = CandlestickPatternSnapshot {
+                bull_engulfing: pat.bull_engulfing,
+                bear_engulfing: pat.bear_engulfing,
+                hammer: pat.hammer,
+                shooting_star: pat.shooting_star,
+                doji: pat.doji,
             };
 
             frames_15m.push(PreparedCandle {
@@ -287,6 +344,7 @@ impl PreparedDataset {
                     volatility,
                     directional,
                     volume,
+                    patterns: patterns_snap,
                 },
             });
         }

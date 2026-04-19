@@ -86,11 +86,9 @@ where
 {
     let mut total = 0.0;
     let mut count = 0;
-    for value in values {
-        if let Some(number) = value {
-            total += number;
-            count += 1;
-        }
+    for number in values.into_iter().flatten() {
+        total += number;
+        count += 1;
     }
     (count > 0).then_some(total)
 }
@@ -156,8 +154,9 @@ mod tests {
         ];
 
         let err = aggregate_15m_to_1h(&candles).expect_err("expected incomplete group rejection");
-        assert!(err
-            .to_string()
-            .contains("unable to derive any complete 1h candles"));
+        assert!(
+            err.to_string()
+                .contains("unable to derive any complete 1h candles")
+        );
     }
 }

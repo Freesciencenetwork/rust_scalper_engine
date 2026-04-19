@@ -9,8 +9,8 @@ use crate::context::rustyfish::{RustyFishDailyReport, map_report_to_overlay};
 use crate::domain::{Candle, MacroEvent, SymbolFilters, SystemMode};
 use crate::market_data::{PreparedCandle, PreparedDataset};
 use crate::strategies::strategy_engine_for;
-use crate::strategy::formulas::{PositionPlan, build_position_plan};
 use crate::strategy::SignalDecision;
+use crate::strategy::formulas::{PositionPlan, build_position_plan};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RuntimeState {
@@ -127,22 +127,54 @@ impl DecisionMachine {
         }
 
         if let Some(ov) = &request.config_overrides {
-            if let Some(v) = ov.min_target_move_pct { config.min_target_move_pct = v; }
-            if let Some(v) = ov.stop_atr_multiple { config.stop_atr_multiple = v; }
-            if let Some(v) = ov.target_atr_multiple { config.target_atr_multiple = v; }
-            if let Some(v) = ov.runway_lookback { config.runway_lookback = v; }
-            if let Some(v) = ov.ema_fast_period { config.ema_fast_period = v; }
-            if let Some(v) = ov.ema_slow_period { config.ema_slow_period = v; }
-            if let Some(v) = ov.low_vol_enabled { config.low_vol_enabled = v; }
-            if let Some(v) = ov.high_vol_ratio { config.high_vol_ratio = v; }
-            if let Some(v) = ov.breakout_lookback { config.breakout_lookback = v; }
-            if let Some(v) = ov.failed_acceptance_lookback_bars { config.failed_acceptance_lookback_bars = v; }
-            if let Some(v) = ov.trend_confirm_bars { config.trend_confirm_bars = v; }
-            if let Some(v) = ov.vp_enabled { config.vp_enabled = v; }
-            if let Some(v) = ov.vp_lookback_bars { config.vp_lookback_bars = v; }
-            if let Some(v) = ov.vp_value_area_ratio { config.vp_value_area_ratio = v; }
-            if let Some(v) = ov.vp_bin_count { config.vp_bin_count = v; }
-            if let Some(v) = ov.strategy_id.clone() { config.strategy_id = v; }
+            if let Some(v) = ov.min_target_move_pct {
+                config.min_target_move_pct = v;
+            }
+            if let Some(v) = ov.stop_atr_multiple {
+                config.stop_atr_multiple = v;
+            }
+            if let Some(v) = ov.target_atr_multiple {
+                config.target_atr_multiple = v;
+            }
+            if let Some(v) = ov.runway_lookback {
+                config.runway_lookback = v;
+            }
+            if let Some(v) = ov.ema_fast_period {
+                config.ema_fast_period = v;
+            }
+            if let Some(v) = ov.ema_slow_period {
+                config.ema_slow_period = v;
+            }
+            if let Some(v) = ov.low_vol_enabled {
+                config.low_vol_enabled = v;
+            }
+            if let Some(v) = ov.high_vol_ratio {
+                config.high_vol_ratio = v;
+            }
+            if let Some(v) = ov.breakout_lookback {
+                config.breakout_lookback = v;
+            }
+            if let Some(v) = ov.failed_acceptance_lookback_bars {
+                config.failed_acceptance_lookback_bars = v;
+            }
+            if let Some(v) = ov.trend_confirm_bars {
+                config.trend_confirm_bars = v;
+            }
+            if let Some(v) = ov.vp_enabled {
+                config.vp_enabled = v;
+            }
+            if let Some(v) = ov.vp_lookback_bars {
+                config.vp_lookback_bars = v;
+            }
+            if let Some(v) = ov.vp_value_area_ratio {
+                config.vp_value_area_ratio = v;
+            }
+            if let Some(v) = ov.vp_bin_count {
+                config.vp_bin_count = v;
+            }
+            if let Some(v) = ov.strategy_id.clone() {
+                config.strategy_id = v;
+            }
         }
 
         let overlay = request

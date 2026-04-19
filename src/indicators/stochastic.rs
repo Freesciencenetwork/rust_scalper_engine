@@ -29,11 +29,11 @@ pub fn stochastic_series(
         let ll = w.iter().map(|c| c.low).fold(f64::INFINITY, f64::min);
         let c = candles[i].close;
         let denom = hh - ll;
-        k_hist[i] = Some(if denom.abs() < f64::EPSILON {
-            50.0
+        k_hist[i] = if denom.abs() < f64::EPSILON {
+            None
         } else {
-            100.0 * (c - ll) / denom
-        });
+            Some(100.0 * (c - ll) / denom)
+        };
     }
     for i in 0..n {
         if i + 1 < k_period + d_period - 1 {
@@ -41,11 +41,9 @@ pub fn stochastic_series(
         }
         let mut sum = 0.0;
         let mut cnt = 0usize;
-        for j in i + 1 - d_period..=i {
-            if let Some(k) = k_hist[j] {
-                sum += k;
-                cnt += 1;
-            }
+        for k in k_hist[i + 1 - d_period..=i].iter().flatten() {
+            sum += k;
+            cnt += 1;
         }
         if cnt != d_period {
             continue;

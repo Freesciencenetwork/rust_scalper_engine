@@ -107,12 +107,11 @@ impl StrategyEngine {
         if regime == VolatilityRegime::High {
             reasons.push("high_vol_regime".to_string());
         }
-        if self.config.low_vol_enabled {
-            if let Some(entry_price) = trigger_price {
-                if low_vol_floor_active(frame, entry_price, &self.config) {
-                    reasons.push("low_vol_floor".to_string());
-                }
-            }
+        if self.config.low_vol_enabled
+            && let Some(entry_price) = trigger_price
+            && low_vol_floor_active(frame, entry_price, &self.config)
+        {
+            reasons.push("low_vol_floor".to_string());
         }
 
         SignalDecision {
@@ -129,11 +128,6 @@ impl StrategyEngine {
     }
 
     pub(crate) fn update_failed_acceptance(&mut self, index: usize, dataset: &PreparedDataset) {
-        update_failed_acceptance(
-            &mut self.failed_acceptance,
-            index,
-            dataset,
-            &self.config,
-        );
+        update_failed_acceptance(&mut self.failed_acceptance, index, dataset, &self.config);
     }
 }

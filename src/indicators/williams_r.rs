@@ -18,12 +18,9 @@ pub fn williams_r_series(candles: &[Candle], period: usize) -> Vec<Option<f64>> 
         let ll = w.iter().map(|c| c.low).fold(f64::INFINITY, f64::min);
         let c = candles[i].close;
         let denom = hh - ll;
-        let r = if denom.abs() < f64::EPSILON {
-            -50.0
-        } else {
-            -100.0 * (hh - c) / denom
-        };
-        out[i] = Some(r);
+        if denom.abs() >= f64::EPSILON {
+            out[i] = Some(-100.0 * (hh - c) / denom);
+        }
     }
     out
 }

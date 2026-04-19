@@ -17,7 +17,7 @@ pub fn mass_index_series(
     let hl: Vec<f64> = candles.iter().map(|c| c.high - c.low).collect();
     let e1 = ema_series(&hl, ema_period);
     let e2 = ema_series(&e1, ema_period);
-    for i in 0..n {
+    for (i, slot) in out.iter_mut().enumerate() {
         if i + 1 < sum_period {
             continue;
         }
@@ -29,7 +29,7 @@ pub fn mass_index_series(
             }
             sum += e1[j] / b;
         }
-        out[i] = Some(sum);
+        *slot = Some(sum);
     }
     out
 }

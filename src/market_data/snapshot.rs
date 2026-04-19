@@ -24,6 +24,16 @@ pub struct MomentumSnapshot {
     pub kst: Option<f64>,
     pub elder_bull: Option<f64>,
     pub elder_bear: Option<f64>,
+    pub cmo_14: Option<f64>,
+    pub trix_15: Option<f64>,
+    pub trix_signal_9: Option<f64>,
+    pub kvo_34_55: Option<f64>,
+    pub kvo_signal_13: Option<f64>,
+    pub chaikin_oscillator_3_10: Option<f64>,
+    pub pvo_line: Option<f64>,
+    pub pvo_signal: Option<f64>,
+    pub pvo_hist: Option<f64>,
+    pub force_index_13: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -51,6 +61,14 @@ pub struct TrendSnapshot {
     pub dema_20: Option<f64>,
     pub tema_20: Option<f64>,
     pub mcginley_14: Option<f64>,
+    pub kama_10: Option<f64>,
+    pub alma_20: Option<f64>,
+    pub vidya_14: Option<f64>,
+    pub mama: Option<f64>,
+    pub fama: Option<f64>,
+    pub lr_slope_20: Option<f64>,
+    pub price_zscore_20: Option<f64>,
+    pub hist_vol_logrets_20: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -93,6 +111,10 @@ pub struct VolatilitySnapshot {
     pub mass_index_25: Option<f64>,
     pub pivot_classic: PivotClassicSnapshot,
     pub pivot_fib: PivotFibSnapshot,
+    pub ttm_squeeze_on: Option<bool>,
+    pub ttm_squeeze_momentum: Option<f64>,
+    pub chandelier_long_stop_22_3: Option<f64>,
+    pub chandelier_short_stop_22_3: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -104,6 +126,8 @@ pub struct DirectionalSnapshot {
     pub aroon_down_25: Option<f64>,
     pub psar: Option<f64>,
     pub psar_trend_long: Option<bool>,
+    pub vortex_vi_plus_14: Option<f64>,
+    pub vortex_vi_minus_14: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -113,6 +137,17 @@ pub struct VolumeSnapshot {
     pub cmf_20: Option<f64>,
     pub volume_sma_20: Option<f64>,
     pub volume_ema_20: Option<f64>,
+    pub nvi: Option<f64>,
+    pub pvi: Option<f64>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CandlestickPatternSnapshot {
+    pub bull_engulfing: bool,
+    pub bear_engulfing: bool,
+    pub hammer: bool,
+    pub shooting_star: bool,
+    pub doji: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -123,4 +158,5 @@ pub struct IndicatorSnapshot {
     pub volatility: VolatilitySnapshot,
     pub directional: DirectionalSnapshot,
     pub volume: VolumeSnapshot,
+    pub patterns: CandlestickPatternSnapshot,
 }

@@ -1,3 +1,6 @@
+#![allow(non_snake_case)] // Same package name as library crate (`binance_BTC`).
+#![allow(clippy::multiple_crate_versions)] // Transitive duplicates; see `lib.rs`.
+
 //! Minimal **paper** loop: pull Binance `15m` history, run [`DecisionMachine`], print advice and a toy portfolio.
 //!
 //! Not execution-grade (no exchange, no real stops).  
@@ -6,12 +9,10 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use binance_BTC::{
-    DecisionMachine, MachineAction, MachineRequest, RuntimeState, StrategyConfig,
-};
 use binance_BTC::domain::SymbolFilters;
+use binance_BTC::{DecisionMachine, MachineAction, MachineRequest, RuntimeState, StrategyConfig};
 use binance_spot_candles::adapters::binance::{
-    fetch_klines, http_client, BinanceExchangeInfoAdapter,
+    BinanceExchangeInfoAdapter, fetch_klines, http_client,
 };
 use binance_spot_candles::adapters::traits::SymbolMetadataAdapter;
 use clap::Parser;
@@ -19,7 +20,10 @@ use reqwest::Client;
 use tokio::time::sleep;
 
 #[derive(Parser, Debug)]
-#[command(name = "paper_bot", about = "Paper loop: Binance 15m klines + DecisionMachine (no real orders)")]
+#[command(
+    name = "paper_bot",
+    about = "Paper loop: Binance 15m klines + DecisionMachine (no real orders)"
+)]
 struct Cli {
     #[arg(long, default_value = "BTCUSDT")]
     symbol: String,
@@ -92,10 +96,7 @@ async fn main() -> Result<()> {
         .context("klines")?;
 
         let n = candles.len();
-        let mark = candles
-            .last()
-            .context("empty klines")?
-            .close;
+        let mark = candles.last().context("empty klines")?.close;
         let equity_for_sizing = paper.usdt + paper.btc * mark;
 
         let request = MachineRequest {
@@ -127,45 +128,43 @@ async fn main() -> Result<()> {
             response.decision.reasons
         );
 
-        if paper.btc > 0.0 {
-            if let Some(stop) = paper.stop_price {
-                if diag_close <= stop {
-                    let proceeds = paper.btc * diag_close;
-                    paper.usdt += proceeds;
-                    println!(
-                        "PAPER: simulated STOP {:.6} BTC @ {:.2} (diag close) — flat",
-                        paper.btc, diag_close
-                    );
-                    paper.btc = 0.0;
-                    paper.avg_entry = 0.0;
-                    paper.stop_price = None;
-                }
-            }
+        if paper.btc > 0.0
+            && let Some(stop) = paper.stop_price
+            && diag_close <= stop
+        {
+            let proceeds = paper.btc * diag_close;
+            paper.usdt += proceeds;
+            println!(
+                "PAPER: simulated STOP {:.6} BTC @ {:.2} (diag close) — flat",
+                paper.btc, diag_close
+            );
+            paper.btc = 0.0;
+            paper.avg_entry = 0.0;
+            paper.stop_price = None;
         }
 
-        if matches!(response.action, MachineAction::ArmLongStop) {
-            if let Some(plan) = &response.plan {
-                if let Some(qty) = plan.qty_btc {
-                    if qty > 0.0 && paper.btc <= 0.0 {
-                        let fill = plan.trigger_price;
-                        let cost = qty * fill;
-                        if cost <= paper.usdt {
-                            paper.usdt -= cost;
-                            paper.btc = qty;
-                            paper.avg_entry = fill;
-                            paper.stop_price = Some(plan.stop_price);
-                            println!(
-                                "PAPER: simulated BUY {:.6} BTC @ {:.2} (trigger); stop {:.2} target {:.2}",
-                                qty, fill, plan.stop_price, plan.target_price
-                            );
-                        } else {
-                            println!(
-                                "PAPER: skip buy — need {:.2} USDT, have {:.2}",
-                                cost, paper.usdt
-                            );
-                        }
-                    }
-                }
+        if matches!(response.action, MachineAction::ArmLongStop)
+            && let Some(plan) = &response.plan
+            && let Some(qty) = plan.qty_btc
+            && qty > 0.0
+            && paper.btc <= 0.0
+        {
+            let fill = plan.trigger_price;
+            let cost = qty * fill;
+            if cost <= paper.usdt {
+                paper.usdt -= cost;
+                paper.btc = qty;
+                paper.avg_entry = fill;
+                paper.stop_price = Some(plan.stop_price);
+                println!(
+                    "PAPER: simulated BUY {:.6} BTC @ {:.2} (trigger); stop {:.2} target {:.2}",
+                    qty, fill, plan.stop_price, plan.target_price
+                );
+            } else {
+                println!(
+                    "PAPER: skip buy — need {:.2} USDT, have {:.2}",
+                    cost, paper.usdt
+                );
             }
         }
 
@@ -195,6 +194,5 @@ async fn fetch_symbol_filters(
         .error_for_status()?
         .text()
         .await?;
-    BinanceExchangeInfoAdapter::parse_symbol_filters(&body, symbol)
-        .context("parse_symbol_filters")
+    BinanceExchangeInfoAdapter::parse_symbol_filters(&body, symbol).context("parse_symbol_filters")
 }

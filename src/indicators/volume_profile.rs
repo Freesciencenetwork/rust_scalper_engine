@@ -110,12 +110,12 @@ fn accumulate_bar_volume(
         return;
     }
     let bar_range = hi - lo;
-    for i in 0..bin_count {
+    for (i, bin_vol) in bins.iter_mut().enumerate().take(bin_count) {
         let b_lo = range_lo + i as f64 * width;
         let b_hi = b_lo + width;
         let overlap = (hi.min(b_hi) - lo.max(b_lo)).max(0.0);
         if overlap > 0.0 {
-            bins[i] += v * overlap / bar_range;
+            *bin_vol += v * overlap / bar_range;
         }
     }
 }
@@ -210,7 +210,11 @@ mod tests {
             c(3, 110.0, 111.0, 109.0, 110.0, 1.0),
         ];
         let z = volume_profile_zones(&candles, 3, 4, 32, 0.7).expect("zones");
-        assert!(z.poc < 75.0, "poc should sit with dense low prints, got {}", z.poc);
+        assert!(
+            z.poc < 75.0,
+            "poc should sit with dense low prints, got {}",
+            z.poc
+        );
         assert!(z.val <= z.poc && z.poc <= z.vah);
     }
 }

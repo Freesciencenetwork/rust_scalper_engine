@@ -4,6 +4,7 @@ pub mod snapshot;
 
 pub use data::{PreparedCandle, PreparedDataset};
 pub use snapshot::{
-    DirectionalSnapshot, IchimokuSnapshot, IndicatorSnapshot, MomentumSnapshot, PivotClassicSnapshot,
-    PivotFibSnapshot, TrendSnapshot, VolatilitySnapshot, VolumeSnapshot,
+    CandlestickPatternSnapshot, DirectionalSnapshot, IchimokuSnapshot, IndicatorSnapshot,
+    MomentumSnapshot, PivotClassicSnapshot, PivotFibSnapshot, TrendSnapshot, VolatilitySnapshot,
+    VolumeSnapshot,
 };

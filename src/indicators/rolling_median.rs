@@ -12,7 +12,7 @@ pub fn rolling_median(values: &[f64], lookback: usize) -> Vec<Option<f64>> {
         let mut window = values[start..=index].to_vec();
         window.sort_by(f64::total_cmp);
         let mid = window.len() / 2;
-        let median = if window.len() % 2 == 0 {
+        let median = if window.len().is_multiple_of(2) {
             (window[mid - 1] + window[mid]) / 2.0
         } else {
             window[mid]
