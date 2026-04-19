@@ -1,33 +1,28 @@
 #!/usr/bin/env python3
-“””
-Talk to the rust_scalper_engine HTTP API from Python (stdlib only).
+"""
+Talk to the rust_scalper_engine HTTP API from Python (stdlib only). No API keys — the server
+does not perform HTTP authentication (protect the listener with your own network / proxy if needed).
 
-What you send
-  • `candles` — closed OHLCV bars, oldest → newest (any timeframe).
-  • Optional: `macro_events`, `runtime_state`, `account_equity`, `symbol_filters`,
-    `config_overrides` (e.g. `higher_tf_factor`, `vwap_anchor_mode`).
+Indicator endpoints
+  • GET /v1/catalog — strategy ids + indicator dot paths.
+  • GET /v1/indicators — list entries.
+  • POST /v1/indicators/{name} — last-bar value for one catalog path.
+  • POST /v1/indicators/{name}/replay — one indicator over a bar window.
+  • POST /v1/indicators/replay — multiple indicators (non-empty `indicators` list in body).
 
-What you do NOT send
-  • You do not send “RSI” or “MACD” values. The Rust engine computes all indicators
-    from your OHLCV candles.
+Strategy linear replay
+  • POST /v1/strategies/replay — JSON steps with per-bar SignalDecision (optional from_index, to_index, step).
 
-Indicator endpoints (HTTP)
-  • `GET /v1/catalog` — lists strategy ids + valid indicator dot paths.
-  • `GET /v1/indicators` — list all indicator entries.
-  • `GET /v1/indicators/{name}` — metadata for one indicator.
-  • `POST /v1/indicators/{name}` — compute last-bar value for one indicator.
-  • `POST /v1/indicators/{name}/replay` — replay one indicator over a bar window.
-  • `POST /v1/indicators/replay` — replay multiple indicators (list in body).
-
-Run the server first (dev-friendly shorter history):
-  VOL_BASELINE_LOOKBACK_BARS=96 cargo run --bin server
+Run the server (shorter warmup in dev):
+  VOL_BASELINE_LOOKBACK_BARS=96 cargo run
 
 Then:
   python3 examples/engine_http_client.py
   python3 examples/engine_http_client.py --catalog
-  python3 examples/engine_http_client.py --multi
-  ENGINE_URL=http://127.0.0.1:8080 EVALUATE_API_KEY=secret python3 examples/engine_http_client.py
-“””
+  python3 examples/engine_http_client.py --replay
+  python3 examples/engine_http_client.py --strategy-replay
+  ENGINE_URL=http://127.0.0.1:8080 python3 examples/engine_http_client.py
+"""
 
 from __future__ import annotations
 
@@ -71,20 +66,10 @@ def synthetic_candles(count: int, start_close_ms: int) -> list[dict]:
 
 
 def machine_request(candle_count: int) -> dict:
-    # Same millisecond style as repo fixtures (Binance close time convention).
     start_ms = 1_744_676_100_000
     return {
         "candles": synthetic_candles(candle_count, start_ms),
         "bar_interval": "15m",
-        "macro_events": [],
-        "runtime_state": {
-            "realized_net_r_today": 0.0,
-            "halt_new_entries_flag": 0,
-        },
-        "account_equity": 100_000.0,
-        "symbol_filters": {"tick_size": 0.1, "lot_step": 0.001},
-        # Omit strategy → default. Try e.g. "macd_trend", "rsi_pullback", … if built in.
-        "config_overrides": {"strategy_id": "default"},
     }
 
 
@@ -97,11 +82,9 @@ def get_json(url: str, path: str) -> tuple[int, str]:
         return e.code, e.read().decode("utf-8")
 
 
-def post_json(url: str, path: str, payload: dict, api_key: str | None) -> tuple[int, str]:
+def post_json(url: str, path: str, payload: dict) -> tuple[int, str]:
     body = json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json; charset=utf-8"}
-    if api_key:
-        headers["X-Api-Key"] = api_key
     req = urllib.request.Request(url.rstrip("/") + path, data=body, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
@@ -111,43 +94,32 @@ def post_json(url: str, path: str, payload: dict, api_key: str | None) -> tuple[
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="POST MachineRequest JSON to the engine HTTP API.")
+    p = argparse.ArgumentParser(description="Call the engine HTTP API (indicator or strategy replay JSON).")
     p.add_argument(
         "--catalog",
         action="store_true",
-        help="GET /v1/catalog (strategy ids + indicator path list). No API key.",
-    )
-    p.add_argument(
-        "--multi",
-        action="store_true",
-        help="POST /v1/evaluate_multi (see --strategies / --indicators).",
+        help="GET /v1/catalog.",
     )
     p.add_argument(
         "--replay",
         action="store_true",
-        help="Call /v1/evaluate_replay with from_index/to_index/step on the same payload shape.",
+        help="POST /v1/indicators/ema_fast/replay with from_index/to_index/step.",
+    )
+    p.add_argument(
+        "--strategy-replay",
+        action="store_true",
+        help="POST /v1/strategies/replay (linear strategy decisions).",
     )
     p.add_argument("--from-index", type=int, default=80)
     p.add_argument("--to-index", type=int, default=95)
     p.add_argument("--step", type=int, default=1)
     p.add_argument("--candles", type=int, default=96, help="How many 15m bars (>= ~96 for dev server).")
-    p.add_argument(
-        "--strategies",
-        default="default,macd_trend",
-        help="Comma-separated strategy ids for --multi (must match GET /v1/catalog).",
-    )
-    p.add_argument(
-        "--indicators",
-        default="ema_fast_15m,indicator_snapshot.momentum.rsi_14",
-        help="Comma-separated indicator paths for --multi (empty string = all paths).",
-    )
     args = p.parse_args()
 
     base = os.environ.get("ENGINE_URL", "http://127.0.0.1:8080").rstrip("/")
-    api_key = os.environ.get("EVALUATE_API_KEY", "").strip() or None
 
-    if args.catalog + args.multi + args.replay > 1:
-        print("Choose at most one of --catalog, --multi, --replay.", file=sys.stderr)
+    if args.catalog + args.replay + args.strategy_replay > 1:
+        print("Choose at most one of --catalog, --replay, --strategy-replay.", file=sys.stderr)
         return 2
 
     if args.catalog:
@@ -163,13 +135,16 @@ def main() -> int:
         return 0 if status == 200 else 1
 
     payload = machine_request(args.candles)
-    if args.multi:
-        inds = [s.strip() for s in args.indicators.split(",") if s.strip()]
-        strats = [s.strip() for s in args.strategies.split(",") if s.strip()]
-        path = "/v1/evaluate_multi"
-        payload = {**payload, "strategies": strats, "indicators": inds}
-    elif args.replay:
-        path = "/v1/evaluate_replay"
+    if args.replay:
+        path = "/v1/indicators/ema_fast/replay"
+        payload = {
+            **payload,
+            "from_index": args.from_index,
+            "to_index": args.to_index,
+            "step": args.step,
+        }
+    elif args.strategy_replay:
+        path = "/v1/strategies/replay"
         payload = {
             **payload,
             "from_index": args.from_index,
@@ -177,11 +152,12 @@ def main() -> int:
             "step": args.step,
         }
     else:
-        path = "/v1/evaluate"
+        path = "/v1/indicators/ema_fast"
 
     print(f"POST {base}{path}  (candles={args.candles})", file=sys.stderr)
-    status, text = post_json(base, path, payload, api_key)
+    status, text = post_json(base, path, payload)
     print(f"HTTP {status}", file=sys.stderr)
+
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
@@ -195,27 +171,18 @@ def main() -> int:
     if status != 200:
         return 1
 
-    if args.multi:
-        strategies = data.get("strategies") or {}
-        inds = data.get("indicators") or {}
-        unk = data.get("unknown_indicator_filters") or []
-        sample = next(iter(inds.values()), {})
-        sample_keys = list(sample.keys()) if isinstance(sample, dict) else []
+    if args.replay:
+        steps = data.get("steps") or []
+        print(f"\nSummary: {len(steps)} indicator replay steps", file=sys.stderr)
+    elif args.strategy_replay:
+        steps = data.get("steps") or []
+        sid = data.get("strategy_id")
+        print(f"\nSummary: strategy_id={sid!r} steps={len(steps)}", file=sys.stderr)
+    else:
         print(
-            f"\nSummary: strategies={list(strategies.keys())} indicator_keys={len(inds)} "
-            f"unknown_filters={unk[:5]} sample_value_fields={sample_keys}",
+            f"\nSummary: path={data.get('path')!r} computable={data.get('computable')!r}",
             file=sys.stderr,
         )
-    elif not args.replay:
-        action = data.get("action")
-        allowed = (data.get("decision") or {}).get("allowed")
-        reasons = (data.get("decision") or {}).get("reasons")
-        print(f"\nSummary: action={action!r} allowed={allowed!r}", file=sys.stderr)
-        if reasons:
-            print(f"Reasons ({len(reasons)}): {reasons[:8]}{' …' if len(reasons) > 8 else ''}", file=sys.stderr)
-    else:
-        steps = data.get("steps") or []
-        print(f"\nSummary: {len(steps)} replay steps", file=sys.stderr)
 
     return 0
 

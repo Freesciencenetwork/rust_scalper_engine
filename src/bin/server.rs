@@ -4,25 +4,27 @@
 //!   [`Arc`] state is **read-only** after startup (no cross-request mutable server state).
 //! - **Scale out:** run **N** identical processes behind a load balancer; capacity grows with
 //!   **N × (per-machine CPU/RAM throughput)**. No sticky sessions. Use the same optional env
-//!   (`EVALUATE_API_KEY`, `VOL_BASELINE_LOOKBACK_BARS`, …) on every replica when those matter.
+//!   (`VOL_BASELINE_LOOKBACK_BARS`, …) on every replica when those matter. **No HTTP authentication**
+//!   — run behind your own reverse proxy / VPN if you need access control.
 //! - **Concurrency:** omit `EVALUATE_MAX_INFLIGHT` for **no** software inflight cap on indicator
 //!   compute (only hardware / the runtime limit you). Set a positive value to cap concurrent
 //!   requests **per process** (overload protection).
 //!
 //! ## Route map
 //!
-//! | Method | Path | Auth | Description |
-//! |--------|------|------|-------------|
-//! | GET | `/health` | — | Liveness check. |
-//! | GET | `/v1/capabilities` | — | Machine metadata. |
-//! | GET | `/v1/catalog` | — | Full combined discovery (strategies + indicators). |
-//! | GET | `/v1/indicators` | — | List all indicator entries. |
-//! | GET | `/v1/indicators/{name}` | — | Metadata for one indicator (404 if unknown). |
-//! | GET | `/v1/strategies` | — | List all strategy entries. |
-//! | GET | `/v1/strategies/{id}` | — | Metadata for one strategy (404 if unknown). |
-//! | POST | `/v1/indicators/{name}` | key | Compute last-bar value for one indicator. |
-//! | POST | `/v1/indicators/{name}/replay` | key | Replay one indicator over a bar window. |
-//! | POST | `/v1/indicators/replay` | key | Replay multiple indicators (list in body) over a bar window. |
+//! | Method | Path | Description |
+//! |--------|------|-------------|
+//! | GET | `/health` | Liveness check. |
+//! | GET | `/v1/capabilities` | Machine metadata. |
+//! | GET | `/v1/catalog` | Full combined discovery (strategies + indicators). |
+//! | GET | `/v1/indicators` | List all indicator entries. |
+//! | GET | `/v1/indicators/{name}` | Metadata for one indicator (404 if unknown). |
+//! | GET | `/v1/strategies` | List all strategy entries. |
+//! | GET | `/v1/strategies/{id}` | Metadata for one strategy (404 if unknown). |
+//! | POST | `/v1/indicators/{name}` | Compute last-bar value for one indicator. |
+//! | POST | `/v1/indicators/{name}/replay` | Replay one indicator over a bar window. |
+//! | POST | `/v1/indicators/replay` | Replay multiple indicators (list in body) over a bar window. |
+//! | POST | `/v1/strategies/replay` | Linear strategy decisions over a bar index range (JSON). |
 
 #![allow(non_snake_case)] // Same package name as library crate (`binance_BTC`).
 #![allow(clippy::multiple_crate_versions)] // Transitive duplicates; see `lib.rs`.
@@ -34,24 +36,23 @@ use axum::{
     Json, Router,
     extract::DefaultBodyLimit,
     extract::Path,
-    extract::Request,
     extract::State,
-    http::{HeaderMap, StatusCode},
-    middleware::{self, Next},
+    http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
 };
 use binance_BTC::{
     CatalogIndicatorEntry, CatalogResponse, CatalogStrategyEntry, DecisionMachine,
-    EvaluateIndicatorError, IndicatorEvaluateResponse, IndicatorReplayRequest,
+    EvaluateIndicatorError, EvaluateStrategyError, IndicatorEvaluateResponse, IndicatorReplayRequest,
     IndicatorReplayResponse, MachineCapabilities, MachineRequest, StrategyConfig,
+    StrategyReplayRequest, StrategyReplayResponse,
 };
 use tower::limit::ConcurrencyLimitLayer;
 use tower::util::option_layer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
-/// Max JSON body size for JSON POST routes (`/v1/indicators/*`).
+/// Max JSON body size for JSON POST routes (`/v1/indicators/*`, `/v1/strategies/replay`).
 const MAX_JSON_BODY: usize = 10 * 1024 * 1024;
 
 #[tokio::main]
@@ -71,18 +72,6 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|value| value.trim().parse().ok())
         .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
 
-    let evaluate_api_key = std::env::var("EVALUATE_API_KEY")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .map(Arc::<str>::from);
-
-    if evaluate_api_key.is_some() {
-        tracing::info!(
-            "EVALUATE_API_KEY is set; POST /v1/indicators/* require authentication"
-        );
-    }
-
     let evaluate_max_inflight = std::env::var("EVALUATE_MAX_INFLIGHT")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
@@ -91,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
     if let Some(n) = evaluate_max_inflight {
         tracing::info!(
             evaluate_max_inflight = n,
-            "EVALUATE_MAX_INFLIGHT: concurrent POST /v1/indicators/* capped per process"
+            "EVALUATE_MAX_INFLIGHT: concurrent POST /v1/indicators/* and /v1/strategies/replay capped per process"
         );
     } else {
         tracing::info!(
@@ -101,37 +90,20 @@ async fn main() -> anyhow::Result<()> {
 
     let machine = Arc::new(machine_from_env());
 
-    let evaluate_auth = {
-        let evaluate_api_key = evaluate_api_key.clone();
-        middleware::from_fn(move |request: Request, next: Next| {
-            let evaluate_api_key = evaluate_api_key.clone();
-            async move {
-                if let Some(expected) = evaluate_api_key.as_ref()
-                    && !header_matches_api_key(request.headers(), expected)
-                {
-                    return unauthorized_response();
-                }
-                next.run(request).await
-            }
-        })
-    };
-
-    // Protected: POST /indicators/* (compute). GET /indicators and GET /strategies are unprotected.
-    let v1_protected = Router::new()
+    let v1_post = Router::new()
         .route("/indicators/{indicator_name}", post(evaluate_indicator))
         .route("/indicators/{indicator_name}/replay", post(evaluate_indicator_replay))
         .route("/indicators/replay", post(evaluate_indicators_replay))
-        .layer(option_layer(evaluate_concurrency_limit))
-        .layer(evaluate_auth);
+        .route("/strategies/replay", post(evaluate_strategy_replay))
+        .layer(option_layer(evaluate_concurrency_limit));
 
     let v1 = Router::new()
-        // Discovery — no auth required.
         .route("/catalog", get(catalog))
         .route("/indicators", get(list_indicators))
         .route("/indicators/{indicator_name}", get(get_indicator))
         .route("/strategies", get(list_strategies))
         .route("/strategies/{strategy_id}", get(get_strategy))
-        .merge(v1_protected);
+        .merge(v1_post);
 
     let app = Router::new()
         .route("/health", get(health))
@@ -145,50 +117,6 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(%host, %port, "listening");
     axum::serve(listener, app).await?;
     Ok(())
-}
-
-fn header_matches_api_key(headers: &HeaderMap, expected: &str) -> bool {
-    if let Some(value) = headers.get("x-api-key").and_then(|h| h.to_str().ok())
-        && constant_time_str_eq(value.trim(), expected)
-    {
-        return true;
-    }
-    if let Some(auth) = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-    {
-        let auth = auth.trim();
-        let mut parts = auth.splitn(2, char::is_whitespace);
-        let scheme = parts.next().unwrap_or("");
-        if scheme.eq_ignore_ascii_case("bearer")
-            && let Some(token) = parts.next()
-            && constant_time_str_eq(token.trim(), expected)
-        {
-            return true;
-        }
-    }
-    false
-}
-
-/// Best-effort constant-time compare for equal-length secrets (mitigates byte-at-a-time guessing).
-fn constant_time_str_eq(a: &str, b: &str) -> bool {
-    let ab = a.as_bytes();
-    let bb = b.as_bytes();
-    if ab.len() != bb.len() {
-        return false;
-    }
-    ab.iter()
-        .zip(bb.iter())
-        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
-        == 0
-}
-
-fn unauthorized_response() -> axum::response::Response {
-    (
-        StatusCode::UNAUTHORIZED,
-        Json(serde_json::json!({ "error": "unauthorized" })),
-    )
-        .into_response()
 }
 
 fn machine_from_env() -> DecisionMachine {
@@ -220,6 +148,19 @@ async fn health() -> &'static str {
 
 async fn capabilities(State(machine): State<Arc<DecisionMachine>>) -> Json<MachineCapabilities> {
     Json(machine.capabilities().clone())
+}
+
+async fn evaluate_strategy_replay(
+    State(machine): State<Arc<DecisionMachine>>,
+    Json(request): Json<StrategyReplayRequest>,
+) -> Result<Json<StrategyReplayResponse>, ApiError> {
+    machine
+        .evaluate_strategy_replay(request)
+        .map(Json)
+        .map_err(|e| {
+            let EvaluateStrategyError::Dataset(err) = e;
+            ApiError(err)
+        })
 }
 
 async fn evaluate_indicator(

@@ -1,39 +1,37 @@
 # rust_scalper_engine
 
 ## What this is
-A Rust engine that takes closed BTC candles (JSON) and returns a decision:
 
-- **stand_aside** → Do nothing. No trade conditions met or risk filters block entry.
-- **arm_long_stop** → Prepare a long trade by placing a stop-entry above price (execution handled outside this engine).
+**Rust library:** Builds a full [`PreparedDataset`](src/market_data/) from closed OHLCV candles, runs technical indicators, and can drive **strategy** code (e.g. default continuation logic with **`stand_aside`** / **`arm_long_stop`** intent — no broker execution).
 
-It does NOT execute trades.
+**HTTP server (`server` binary):** Stateless JSON API for **discovery**, **indicator** compute/replay, and **linear strategy replay** (`POST /v1/strategies/replay`) over a bar index range — including walking **all** candles you send (e.g. years of history), subject to a **50k-step** safety cap per request.
 
 ---
 
 ## Core idea
 
-Input:   candles + optional context  
-Engine:  computes indicators + applies strategy rules  
-Output:  decision JSON (action + metadata)
+| Surface | Input | Output |
+|--------|--------|--------|
+| **HTTP** | Same [`MachineRequest`](src/machine.rs) body as the library | **Indicators:** `IndicatorEvaluateResponse` / `IndicatorReplayResponse`. **Strategy walk:** `StrategyReplayResponse` from `POST /v1/strategies/replay`. |
+| **Library** | `MachineRequest` + `StrategyConfig` | `PreparedDataset`, per-strategy [`SignalDecision`](src/strategy/decision.rs), etc. |
 
 ---
 
 ## Quick start
 
-### Run demo
-cargo run --bin paper_bot  
-→ Runs a local simulation using historical candles and prints decisions.
-
 ### Run server
-cargo run --bin server  
-→ Starts HTTP API to query the engine programmatically.
+```bash
+cargo run
+# same as: cargo run --bin server
+```
+Starts the HTTP API (default **`HOST`**: `0.0.0.0`, **`PORT`**: `8080`).
 
-Optional:
-VOL_BASELINE_LOOKBACK_BARS=96 cargo run  
-→ Reduces required history for faster testing.
+**Shorter warmup in dev** (fewer bars needed before vol metrics stabilize):
+```bash
+VOL_BASELINE_LOOKBACK_BARS=96 cargo run
+```
 
-Server:
-http://127.0.0.1:8080
+**Base URL:** `http://127.0.0.1:8080` (or your `HOST`/`PORT`).
 
 ---
 
@@ -43,26 +41,48 @@ http://127.0.0.1:8080
 ```bash
 binance-fetch klines --symbol BTCUSDT --interval 15m --limit 1000 > request.json
 ```
-→ Closed OHLCV rows (any timeframe). Add **`"bar_interval": "15m"`** (or your interval label) to the JSON if you edit by hand. **`candles_15m`** is also accepted as a backward-compat alias for **`candles`**.
+Closed OHLCV rows (any timeframe). Add **`"bar_interval": "15m"`** if you edit by hand. **`candles_15m`** is accepted as an alias for **`candles`**.
 
-### 2. Evaluate
+### 2. Pick an indicator path
 ```bash
-curl -sS -X POST http://127.0.0.1:8080/v1/evaluate \
+curl -sS http://127.0.0.1:8080/v1/catalog | head
+```
+Use an exact **`indicators[].path`** string (e.g. **`ema_fast`**, or a nested leaf such as **`indicator_snapshot.momentum.rsi_14`**).
+
+### 3. Compute last bar
+```bash
+curl -sS -X POST 'http://127.0.0.1:8080/v1/indicators/ema_fast' \
   -H "Content-Type: application/json" \
   -d @request.json
 ```
-→ Decision for the **last** bar in **`candles`**.
 
-### 3. Response (shape)
+### 4. Response (shape)
 ```json
 {
-  "action": "arm_long_stop",
-  "decision": { "allowed": true }
+  "path": "ema_fast",
+  "value": 84210.5,
+  "computable": true,
+  "min_bars_required": 9,
+  "bars_available": 96
 }
 ```
 
-- **action** → **`stand_aside`** or **`arm_long_stop`**.
-- **decision.allowed** → whether entry is permitted under current rules.
+- **`computable`** → value is non-null **and** (when catalogued) enough bars were supplied for warmup.
+- **`path`**, **`min_bars_required`**, **`bars_available`**, optional **`path_note`** — see types in [`src/machine.rs`](src/machine.rs).
+
+---
+
+## Strategy from Rust (not HTTP)
+
+**HTTP:** `POST /v1/strategies/replay` with the same candle JSON (optional `from_index` / `to_index` / `step`) returns [`StrategyReplayResponse`](src/machine.rs).
+
+**In Rust:**
+
+1. [`DecisionMachine::prepare_dataset`](src/machine.rs) — merges `MachineRequest` into config and returns `(StrategyConfig, PreparedDataset)`.
+2. Or [`DecisionMachine::evaluate_strategy_replay`](src/machine.rs) — one call for a linear window.
+3. Manual path: `strategy_engine_for(&config)` ([`src/strategies/mod.rs`](src/strategies/mod.rs)), then `replay_failed_acceptance_window` and `decide` per bar.
+
+Integration-style reference: [`tests/engine_advice.rs`](tests/engine_advice.rs).
 
 ---
 
@@ -85,36 +105,40 @@ curl -sS http://127.0.0.1:8080/v1/strategies
 curl -sS 'http://127.0.0.1:8080/v1/strategies/default'
 ```
 
-**Evaluate (POST)** — use a real **`request.json`** with enough bars for your config (dev: **`VOL_BASELINE_LOOKBACK_BARS=96`** on the server).
+**Indicator compute (POST)** — same candle JSON as the library; use enough history for your paths (dev: start server with **`VOL_BASELINE_LOOKBACK_BARS=96`**).
 ```bash
-curl -sS -X POST http://127.0.0.1:8080/v1/evaluate \
-  -H 'Content-Type: application/json' \
-  -d @request.json
-
-curl -sS -X POST http://127.0.0.1:8080/v1/evaluate/replay \
-  -H 'Content-Type: application/json' \
-  -d @request.json
-
-curl -sS -X POST http://127.0.0.1:8080/v1/evaluate/multi \
-  -H 'Content-Type: application/json' \
-  -d @request.json
-
 curl -sS -X POST 'http://127.0.0.1:8080/v1/indicators/ema_fast' \
+  -H 'Content-Type: application/json' \
+  -d @request.json
+
+# Replay window: flatten MachineRequest + optional from_index, to_index, step
+curl -sS -X POST 'http://127.0.0.1:8080/v1/indicators/ema_fast/replay' \
+  -H 'Content-Type: application/json' \
+  -d @request.json
+
+# Multi-indicator replay: add non-empty "indicators": ["ema_fast","atr", ...] to the body
+curl -sS -X POST 'http://127.0.0.1:8080/v1/indicators/replay' \
+  -H 'Content-Type: application/json' \
+  -d @request.json
+
+# Strategy linear replay: add optional "from_index", "to_index", "step" to the same candle JSON
+# (omit them to walk bar 0 → last; cap 50k steps — use a coarser step for very long histories)
+curl -sS -X POST 'http://127.0.0.1:8080/v1/strategies/replay' \
   -H 'Content-Type: application/json' \
   -d @request.json
 ```
 
-If **`EVALUATE_API_KEY`** is set on the server, add **`-H "X-Api-Key: $EVALUATE_API_KEY"`** to every **POST** above.
+The server **does not use HTTP authentication**. Run it on `localhost`, bind to an internal interface only, or put it behind your own reverse proxy / VPN if you need access control.
 
 ---
 
 ## API overview
 
-All routes return JSON. POST routes require `Content-Type: application/json`. Auth (when `EVALUATE_API_KEY` is set) applies only to POST routes — GET discovery routes are always public.
+All HTTP responses here are **JSON** (`Content-Type: application/json`) except plain **`GET /health`**. POST bodies use **`Content-Type: application/json`**.
 
 ---
 
-### Discovery (GET, no auth, no body)
+### Discovery (GET, no body)
 
 #### `GET /health`
 Liveness check. Returns `ok` (plain text). Use for load balancer health probes.
@@ -127,9 +151,16 @@ Returns engine name, version, whether execution is enabled, and the list of acce
   "machine_version": "0.1.0",
   "execution_enabled": false,
   "supported_actions": ["stand_aside", "arm_long_stop"],
-  "accepted_inputs": ["candles", "macro_events_numeric", ...]
+  "accepted_inputs": [
+    "candles",
+    "macro_events_numeric",
+    "symbol_filters",
+    "runtime_state_numeric"
+  ]
 }
 ```
+
+(`supported_actions` describe the **library** strategy contract; the HTTP server only serves indicator compute + discovery.)
 
 #### `GET /v1/catalog`
 Full combined discovery payload: all strategy IDs + every indicator dot-path with warmup metadata. Use this once to learn what paths exist before querying individual endpoints.
@@ -167,74 +198,27 @@ Metadata for one strategy by ID (e.g. `/v1/strategies/default`). Returns `404` w
 
 ---
 
-### Evaluate (POST, auth required when key is set)
+### Indicator compute (POST)
 
-All evaluate endpoints accept the standard [Input format](#input-format) body.
+**Last-bar POST** (`/v1/indicators/{name}`): body is exactly [`MachineRequest`](#input-format) — at minimum **`candles`**; optional **`bar_interval`**, **`runtime_state`**, and other keys as in that section.
 
-#### `POST /v1/evaluate`
-Run the strategy on your candles and return a decision for the **last bar**.
+**Replay POST** (`…/replay` and `/v1/indicators/replay`): JSON is the **same fields at the top level** as `MachineRequest` (serde **flattens** the nested struct), **plus** replay controls on the same object:
 
-- **Input:** standard body — `candles`, optional context.
-- **Output:** `action` (`stand_aside` or `arm_long_stop`), `decision` (gate breakdown), optional `plan` (entry price, stop, target, size), `diagnostics` (config used, indicator snapshot of last bar).
+| Field | Required | Meaning |
+|--------|----------|---------|
+| `candles` (or `candles_15m`) | yes | Bar series, oldest → newest |
+| `bar_interval` | no | **Label only** (e.g. `"15m"`). Same as last-bar: **not parsed into minutes**; see [`bar_interval` (optional string)](#bar_interval-optional-string). |
+| `from_index`, `to_index`, `step` | no | Window over **row indices** (defaults: full series, `step` 1) |
+| `indicators` | multi replay only | Non-empty list of catalog dot-paths |
 
-```json
-{
-  "action": "arm_long_stop",
-  "decision": { "allowed": true, "gates": {...} },
-  "plan": { "entry": 84500.0, "stop": 83900.0, "target": 85300.0, "qty": 0.01 },
-  "diagnostics": { "as_of": 1744676100000, "effective_config": {...}, "latest_frame": {...} }
-}
-```
+**“Timeframe” for math:** the engine treats one JSON row as **one step**; spacing comes from **your** candle timestamps, not from `bar_interval`. For higher-TF rollup fields (e.g. `ema_fast_higher`), set **`config_overrides.higher_tf_factor`** (bar count per bucket), not a string timeframe.
 
-#### `POST /v1/evaluate/replay`
-Run the strategy across a **window of bars** in a single request — like a mini walk-forward without N separate calls. Returns one entry per bar in the range.
-
-- **Extra body fields** (all optional):
-  - `from_index` — first bar index (default `0`)
-  - `to_index` — last bar index (default: last bar)
-  - `step` — emit every Nth bar (default `1`)
-
-```json
-{
-  "steps": [
-    { "bar_index": 90, "close_time": 1744676100000, "action": "stand_aside", "decision": {...}, "plan": null },
-    { "bar_index": 91, "close_time": 1744676100000, "action": "arm_long_stop", "decision": {...}, "plan": {...} }
-  ]
-}
-```
-
-#### `POST /v1/evaluate/multi`
-Evaluate **multiple strategies** and/or return a filtered **indicator snapshot** for the last bar — all in one request. Useful when comparing strategy outputs or pulling specific indicator values alongside a decision.
-
-- **Extra body fields** (all optional):
-  - `strategies` — list of strategy IDs to run (e.g. `["default","macd_trend"]`; empty = default only)
-  - `indicators` — list of dot-paths to include in the response (e.g. `["ema_fast","indicator_snapshot.momentum.rsi_14"]`; empty = all)
-
-```json
-{
-  "as_of": 1744676100000,
-  "bar_index": 95,
-  "strategies": {
-    "default":    { "action": "arm_long_stop", "decision": {...}, "plan": {...} },
-    "macd_trend": { "action": "stand_aside",   "decision": {...}, "plan": null }
-  },
-  "indicators": {
-    "ema_fast": { "value": 84210.5, "computable": true, "min_bars_required": 9, "bars_available": 96 },
-    "indicator_snapshot.momentum.rsi_14": { "value": 58.3, "computable": true, ... }
-  }
-}
-```
-
----
-
-### Indicator compute (POST, auth required when key is set)
-
-These run indicator math on your candle data without running a full strategy evaluation.
+Indicator paths must match `GET /v1/catalog` exactly.
 
 #### `POST /v1/indicators/{name}`
 Compute a single indicator for the **last bar** of your candles. `{name}` is the exact dot-path from `GET /v1/catalog` (e.g. `ema_fast`, `indicator_snapshot.momentum.rsi_14`).
 
-- **Input:** standard body — `candles` + optional context. No extra fields needed.
+- **Input:** `candles` + optional context (including optional **`bar_interval`** for your own documentation).
 - **Output:** the path, its value, whether it was computable (enough bars), warmup requirements.
 - **404** if the path is not in the catalog.
 
@@ -249,9 +233,19 @@ Compute a single indicator for the **last bar** of your candles. `{name}` is the
 ```
 
 #### `POST /v1/indicators/{name}/replay`
-Compute one indicator across a **bar range** — same windowing as `evaluate/replay`.
+Compute one indicator across a **bar range**. Body = **replay shape** above: all `MachineRequest` fields **plus** optional `from_index`, `to_index`, `step` (no `indicators` key — the URL carries the path).
 
-- **Extra body fields** (all optional): `from_index`, `to_index`, `step`
+**Example request (truncated `candles`):**
+```json
+{
+  "candles": [ … ],
+  "bar_interval": "15m",
+  "from_index": 80,
+  "to_index": 95,
+  "step": 1
+}
+```
+
 - **Output:** one step per bar with the indicator value at that point in the series.
 
 ```json
@@ -271,8 +265,8 @@ Compute one indicator across a **bar range** — same windowing as `evaluate/rep
 #### `POST /v1/indicators/replay`
 Same as `{name}/replay` but for **multiple indicators at once**. The paths are listed in the body instead of the URL.
 
-- **Required extra body field:** `indicators` — non-empty list of dot-paths (e.g. `["ema_fast","atr","indicator_snapshot.momentum.rsi_14"]`)
-- **Extra body fields** (optional): `from_index`, `to_index`, `step`
+- **Required:** `indicators` — non-empty list of dot-paths (e.g. `["ema_fast","atr","indicator_snapshot.momentum.rsi_14"]`)
+- **Same optional window / label fields:** `from_index`, `to_index`, `step`, and any `MachineRequest` field such as **`bar_interval`**
 - Unknown paths appear in `unknown_paths` per step (not an error — lets you detect typos).
 
 ```json
@@ -293,20 +287,58 @@ Same as `{name}/replay` but for **multiple indicators at once**. The paths are l
 
 ---
 
+### Strategy linear replay (`POST /v1/strategies/replay`)
+
+Walks the configured **strategy** (crate default is **`default`** unless you add optional **`config_overrides`** in JSON) over a **contiguous bar index range** so you can test the same rules you would use live, bar by bar, on a slice of history or on **the entire** `candles` array you POST.
+
+**Replay vs “timeframe” (for your script):** There is **no** separate URL like `/replay/...` and **no** extra query that means “15m only” or “2020–2024 only”. **Your timeframe is whatever you put in `candles`** — e.g. only 15m bars, only 1h bars, or a slice you already filtered in Python/Rust before POSTing. Optional **`bar_interval`** (e.g. `"15m"`, `"1h"`) is a **label for you and your logs**; the engine still steps by **row index** (`0` … `len-1`), not by parsing that string into minutes. **`from_index` / `to_index` / `step`** choose **which rows** of that array get a `decide` call (e.g. walk the whole 10-year series linearly, or only indices 10 000–11 000). To test another TF, POST a different `candles` series (or resample upstream).
+
+**Semantics (matches library-style replay):** for each emitted index `i`, the engine instantiates the strategy, applies **`halt_new_entries_flag`** via [`RuntimeState`](src/machine.rs), runs **`replay_failed_acceptance_window(0, i, …)`**, then **`decide(i, …)`**. One JSON step per bar in the walk.
+
+**Body:** flattened [`MachineRequest`](#input-format) **plus** (all optional):
+
+| Field | Default | Meaning |
+|--------|---------|---------|
+| `from_index` | `0` | First bar index (inclusive). |
+| `to_index` | last bar | Last bar index (inclusive); clamped to dataset length − 1. |
+| `step` | `1` | Emit every Nth bar (`≥ 1`). Use e.g. `step: 4` to thin a multi-year 15m series while staying under the cap. |
+
+**Cap:** at most **50 000** emitted steps per request (error if `from_index`…`to_index` with `step` would exceed that — widen `step` or split the series).
+
+**Response shape:**
+```json
+{
+  "strategy_id": "default",
+  "steps": [
+    {
+      "bar_index": 100,
+      "close_time": 1744676100000,
+      "decision": {
+        "allowed": false,
+        "reasons": ["macro_veto"],
+        "regime": "normal",
+        "trigger_price": 84200.0,
+        "atr": 310.5
+      }
+    }
+  ]
+}
+```
+
+**Errors:** `400` + JSON `invalid_request` if the window is invalid, the step cap is exceeded, or the dataset cannot be built.
+
+**In Rust** the same idea is [`DecisionMachine::evaluate_strategy_replay`](src/machine.rs); see also [Strategy from Rust](#strategy-from-rust-not-http) for ad-hoc wiring.
+
+---
+
 ## Input format
+
+Minimal POST body (other keys are optional and default in the server — see [`MachineRequest`](src/machine.rs)):
 
 ```json
 {
   "candles": [],
-  "runtime_state": {
-    "realized_net_r_today": 0,
-    "halt_new_entries_flag": 0
-  },
-  "bar_interval": "15m",
-  "macro_events": [],
-  "account_equity": 100000,
-  "symbol_filters": null,
-  "config_overrides": null
+  "bar_interval": "15m"
 }
 ```
 
@@ -315,9 +347,7 @@ Same as `{name}/replay` but for **multiple indicators at once**. The paths are l
 - **candles** → REQUIRED  
   Array of historical price bars (OHLCV). Must be **closed**, **oldest → newest**. JSON field name may be **`candles`** or **`candles_15m`**.
 
-- **runtime_state** → REQUIRED  
-  - **realized_net_r_today** → current PnL in risk units  
-  - **halt_new_entries_flag** → block new entries (0 or 1)
+- **runtime_state** → Optional in JSON (defaults to zeros / no halt). Set it when you care about **halt** or reporting PnL in risk units for **strategy** replay; omit for simple indicator pulls.
 
 #### `bar_interval` (optional string)
 
@@ -333,19 +363,9 @@ Same as `{name}/replay` but for **multiple indicators at once**. The paths are l
 
 The engine **does not** parse these strings into minutes: series are **uniform steps**, warmup is in **bar counts** (see catalog **`min_bars_required`**). The field is for **your logs** and documentation; **`GET /v1/catalog`** describes **`engine_series_semantics`**.
 
-**Higher-timeframe fields** (e.g. **`ema_fast_higher`** / **`ema_slow_higher`**): how many **base** candles form one aggregated step is **`config_overrides.higher_tf_factor`** (default **4**). With **15m** base bars, **4** rows ≈ one hour; if your base step is **1h**, adjust **`higher_tf_factor`** to match how you think about rollups.
+**Higher-timeframe fields** (e.g. **`ema_fast_higher`**): the server uses built-in defaults (e.g. **`higher_tf_factor` = 4** base bars per rollup) unless you add optional **`config_overrides`** — see [`ConfigOverrides`](src/machine.rs) only when you need to tune that.
 
-- **macro_events** → Optional  
-  Scheduled events (`event_time` + numeric **`class`** code); see [`src/domain.rs`](src/domain.rs).
-
-- **account_equity** → Optional  
-  Used when the response includes position sizing hints.
-
-- **symbol_filters** → Optional  
-  Exchange constraints (e.g. tick size, lot step).
-
-- **config_overrides** → Optional  
-  Strategy and engine parameters (see below); includes **`strategy_id`**, **`higher_tf_factor`**, VWAP options, etc. — full list in [`src/machine.rs`](src/machine.rs) (`ConfigOverrides`).
+**Advanced (optional, skip for BTC replay scripts):** **`macro_events`**, **`account_equity`**, **`symbol_filters`**, **`config_overrides`** exist for richer sessions (macro calendar, sizing, tick/lot overrides, EMA periods / `strategy_id`). For “just replay indicators on my candle file”, **`candles`** (+ replay fields like **`indicators`**) is enough.
 
 ---
 
@@ -376,34 +396,22 @@ Optional:
 
 ---
 
-## Config example
-
-"config_overrides": {
-  "strategy_id": "default",      → choose strategy
-  "ema_fast_period": 12,         → short trend window
-  "ema_slow_period": 26,         → long trend window
-  "breakout_lookback": 20        → bars used to detect breakouts
-}
-
----
-
 ## Errors
 
 400 → invalid input (e.g. not enough candles)  
-401 → missing/invalid API key  
-404 → unknown indicator or strategy  
+404 → unknown indicator or strategy id (discovery GETs)  
 422 → malformed JSON  
 
 ---
 
 ## Project structure
 
-machine.rs        → API types + decision engine  
-strategies/       → trading logic implementations  
-indicators/       → technical indicators (RSI, EMA, etc.)  
-market_data/      → data preparation  
-context/          → macro event types and domain context  
-server.rs         → HTTP server  
+`src/machine.rs` → `MachineRequest`, `DecisionMachine` (dataset merge, `prepare_dataset`, indicator + strategy replay)  
+`src/strategies/` → strategy engines (`Strategy` trait)  
+`src/indicators/` → technical indicators  
+`src/market_data/` → `PreparedDataset` / `PreparedCandle`  
+`src/context/` → daily overlay and related context helpers  
+`src/bin/server.rs` → HTTP server (discovery + indicator POSTs)  
 
 ---
 
@@ -438,29 +446,24 @@ start_ms = 1_744_676_100_000
 payload = {
     "candles": [candle_row(i, start_ms) for i in range(96)],
     "bar_interval": "15m",
-    "macro_events": [],
-    "runtime_state": {"realized_net_r_today": 0.0, "halt_new_entries_flag": 0},
-    "account_equity": 100_000.0,
-    "symbol_filters": None,
-    "config_overrides": None,
 }
 
 req = urllib.request.Request(
-    f"{BASE}/v1/evaluate",
+    f"{BASE}/v1/indicators/ema_fast",
     data=json.dumps(payload).encode(),
     headers={"Content-Type": "application/json"},
     method="POST",
 )
 with urllib.request.urlopen(req, timeout=120) as resp:
     out = json.loads(resp.read().decode())
-print(out.get("action"), (out.get("decision") or {}).get("allowed"))
+print(out.get("path"), out.get("computable"), out.get("value"))
 ```
 
 **With a file from `binance-fetch`:** `payload = json.load(open("request.json"))` then add or fix **`bar_interval`** if missing.
 
-**With `requests`:** `requests.post(f"{BASE}/v1/evaluate", json=payload, timeout=120)` — same payload.
+**With `requests`:** `requests.post(f"{BASE}/v1/indicators/ema_fast", json=payload, timeout=120)` — same payload shape.
 
-A fuller CLI helper lives in [`examples/engine_http_client.py`](examples/engine_http_client.py).
+Smallest client: [`examples/simple_post.py`](examples/simple_post.py) (stdlib, one `POST /v1/indicators/ema_fast`). See also [`examples/engine_http_client.py`](examples/engine_http_client.py): **`--catalog`**, default **`POST /v1/indicators/ema_fast`**, **`--replay`**, **`--strategy-replay`**. For **three indicators over 2010–2012**, see [`examples/indicators_replay_date_range.py`](examples/indicators_replay_date_range.py).
 
 ---
 

@@ -21,9 +21,10 @@ pub use config::{StrategyConfig, VwapAnchorMode};
 pub use domain::{Candle, MacroEvent, SymbolFilters};
 pub use indicators::{VolumeProfileZones, volume_profile_zones};
 pub use machine::{
-    ConfigOverrides, DecisionMachine, EvaluateIndicatorError, IndicatorEvaluateResponse,
-    IndicatorReplayRequest, IndicatorReplayResponse, IndicatorReplayStep, IndicatorValueReport,
-    MachineCapabilities, MachineRequest, RuntimeState,
+    ConfigOverrides, DecisionMachine, EvaluateIndicatorError, EvaluateStrategyError,
+    IndicatorEvaluateResponse, IndicatorReplayRequest, IndicatorReplayResponse, IndicatorReplayStep,
+    IndicatorValueReport, MachineCapabilities, MachineRequest, RuntimeState, StrategyReplayRequest,
+    StrategyReplayResponse, StrategyReplayStep,
 };
 pub use strategies::supported_strategy_ids;
 pub use market_data::{

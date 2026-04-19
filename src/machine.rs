@@ -9,8 +9,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use crate::config::StrategyConfig;
-use crate::domain::{Candle, MacroEvent, SymbolFilters};
+use crate::domain::{Candle, MacroEvent, SymbolFilters, SystemMode};
 use crate::market_data::PreparedDataset;
+use crate::strategies::strategy_engine_for;
+use crate::strategy::decision::SignalDecision;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RuntimeState {
@@ -125,10 +127,10 @@ impl std::error::Error for EvaluateIndicatorError {
 
 /// Request body for indicator replay endpoints.
 ///
-/// Same fields as [`ReplayRequest`] (candles + optional window), plus an `indicators` list used
-/// by the multi-indicator variant (`POST /v1/indicators/replay`). The single-indicator variant
-/// (`POST /v1/indicators/{name}/replay`) takes the same body but ignores `indicators` — the path
-/// comes from the URL.
+/// Serde-flattens [`MachineRequest`] into the JSON root (`candles`, optional `bar_interval`, …)
+/// alongside `from_index` / `to_index` / `step`. Multi replay (`POST /v1/indicators/replay`) also
+/// requires non-empty `indicators`; the single-indicator URL variant ignores `indicators` (path
+/// comes from the URL).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IndicatorReplayRequest {
     #[serde(flatten)]
@@ -167,7 +169,61 @@ pub struct IndicatorReplayResponse {
     pub steps: Vec<IndicatorReplayStep>,
 }
 
-/// Hard cap for [`DecisionMachine::evaluate_replay`] (HTTP / batch safety).
+/// Linear **strategy** replay: same candle payload as [`MachineRequest`], plus optional bar window.
+///
+/// **“Timeframe” from the caller’s perspective:** each `candles` row is one bar at the TF you
+/// fetched (15m, 1h, …). [`MachineRequest::bar_interval`] is only a label; replay uses **indices**
+/// into that array, not a separate timeframe selector. Defaults: `from_index = 0`, `to_index =
+/// last bar`, `step = 1` — walk the whole POSTed series linearly, capped at [`MAX_REPLAY_STEPS`].
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StrategyReplayRequest {
+    #[serde(flatten)]
+    pub machine: MachineRequest,
+    #[serde(default)]
+    pub from_index: Option<usize>,
+    #[serde(default)]
+    pub to_index: Option<usize>,
+    #[serde(default)]
+    pub step: Option<usize>,
+}
+
+/// One bar’s [`SignalDecision`] after replaying failed-acceptance state through that index.
+#[derive(Clone, Debug, Serialize)]
+pub struct StrategyReplayStep {
+    pub bar_index: usize,
+    #[serde(with = "chrono::serde::ts_milliseconds")]
+    pub close_time: DateTime<Utc>,
+    pub decision: SignalDecision,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct StrategyReplayResponse {
+    pub strategy_id: String,
+    pub steps: Vec<StrategyReplayStep>,
+}
+
+#[derive(Debug)]
+pub enum EvaluateStrategyError {
+    Dataset(anyhow::Error),
+}
+
+impl std::fmt::Display for EvaluateStrategyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Dataset(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for EvaluateStrategyError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Dataset(e) => Some(e.as_ref()),
+        }
+    }
+}
+
+/// Hard cap for replay-style endpoints (indicator + strategy linear walk) — HTTP / batch safety.
 const MAX_REPLAY_STEPS: usize = 50_000;
 
 struct EvaluationContext {
@@ -344,6 +400,75 @@ impl DecisionMachine {
             i = i.saturating_add(step);
         }
         Ok(IndicatorReplayResponse { steps })
+    }
+
+    /// Walk **`from_index`…`to_index`** (inclusive) by **`step`**, running the configured
+    /// [`StrategyConfig::strategy_id`] at each bar (fresh engine per step so failed-acceptance state
+    /// matches a forward-only replay from bar 0).
+    pub fn evaluate_strategy_replay(
+        &self,
+        req: StrategyReplayRequest,
+    ) -> Result<StrategyReplayResponse, EvaluateStrategyError> {
+        let halt = req.machine.runtime_state.halt_new_entries_flag != 0;
+        let mode = if halt {
+            SystemMode::Halted
+        } else {
+            SystemMode::Active
+        };
+        let from_idx = req.from_index.unwrap_or(0);
+        let to_idx_raw = req.to_index;
+        let step = req.step.unwrap_or(1).max(1);
+        let ctx = self
+            .build_evaluation_context(req.machine)
+            .map_err(EvaluateStrategyError::Dataset)?;
+        let bar_count = ctx.dataset.frames.len();
+        let last = bar_count.checked_sub(1).ok_or_else(|| {
+            EvaluateStrategyError::Dataset(anyhow::anyhow!(
+                "at least one closed candle is required"
+            ))
+        })?;
+        let mut to_idx = to_idx_raw.unwrap_or(last);
+        if to_idx > last {
+            to_idx = last;
+        }
+        if from_idx > to_idx {
+            return Err(EvaluateStrategyError::Dataset(anyhow::anyhow!(
+                "from_index ({from_idx}) must be <= to_index ({to_idx}) after clamping to bar_count-1 ({last})"
+            )));
+        }
+        if from_idx >= bar_count {
+            return Err(EvaluateStrategyError::Dataset(anyhow::anyhow!(
+                "from_index ({from_idx}) must be < bar_count ({bar_count})"
+            )));
+        }
+        let span = to_idx - from_idx;
+        let estimated = span / step + 1;
+        if estimated > MAX_REPLAY_STEPS {
+            return Err(EvaluateStrategyError::Dataset(anyhow::anyhow!(
+                "replay would emit roughly {estimated} steps (from_index={from_idx}, to_index={to_idx}, step={step}; max {MAX_REPLAY_STEPS})"
+            )));
+        }
+
+        let strategy_id = ctx.config.strategy_id.clone();
+        let mut steps = Vec::with_capacity(estimated);
+        let mut i = from_idx;
+        while i <= to_idx {
+            let mut engine = strategy_engine_for(&ctx.config).map_err(EvaluateStrategyError::Dataset)?;
+            engine.set_system_mode(mode);
+            engine.replay_failed_acceptance_window(0, i, &ctx.dataset);
+            let decision = engine.decide(i, &ctx.dataset);
+            let close_time = ctx.dataset.frames[i].candle.close_time;
+            steps.push(StrategyReplayStep {
+                bar_index: i,
+                close_time,
+                decision,
+            });
+            i = i.saturating_add(step);
+        }
+        Ok(StrategyReplayResponse {
+            strategy_id,
+            steps,
+        })
     }
 
     fn build_evaluation_context(&self, request: MachineRequest) -> Result<EvaluationContext> {
@@ -562,5 +687,65 @@ mod tests {
         }"#;
         let parsed: MachineRequest = serde_json::from_str(json).expect("parse");
         assert!(parsed.candles.is_empty());
+    }
+
+    #[test]
+    fn machine_request_minimal_json() {
+        let json = r#"{"candles": []}"#;
+        let parsed: MachineRequest = serde_json::from_str(json).expect("parse");
+        assert!(parsed.candles.is_empty());
+        assert!(parsed.macro_events.is_empty());
+        assert!(parsed.account_equity.is_none());
+        assert!(parsed.symbol_filters.is_none());
+        assert!(parsed.config_overrides.is_none());
+    }
+
+    #[test]
+    fn evaluate_strategy_replay_linear_window() {
+        use chrono::{Duration, TimeZone, Utc};
+
+        use super::{DecisionMachine, MachineRequest, RuntimeState, StrategyReplayRequest};
+        use crate::config::StrategyConfig;
+        use crate::domain::Candle;
+
+        let config = StrategyConfig {
+            vwma_lookback: 4,
+            vol_baseline_lookback_bars: 4,
+            vp_enabled: false,
+            ..Default::default()
+        };
+        let machine = DecisionMachine::new(config);
+        let base = Utc.with_ymd_and_hms(2026, 4, 15, 0, 15, 0).single().unwrap();
+        let candles: Vec<Candle> = (0..24)
+            .map(|i| Candle {
+                close_time: base + Duration::minutes(15 * i as i64),
+                open: 100.0 + i as f64,
+                high: 101.0 + i as f64,
+                low: 99.0 + i as f64,
+                close: 100.5 + i as f64 * 0.2,
+                volume: 10.0,
+                buy_volume: Some(6.0),
+                sell_volume: Some(4.0),
+                delta: None,
+            })
+            .collect();
+        let req = StrategyReplayRequest {
+            machine: MachineRequest {
+                candles,
+                bar_interval: None,
+                macro_events: Vec::new(),
+                runtime_state: RuntimeState::default(),
+                account_equity: None,
+                symbol_filters: None,
+                config_overrides: None,
+            },
+            from_index: Some(20),
+            to_index: Some(22),
+            step: Some(1),
+        };
+        let out = machine.evaluate_strategy_replay(req).expect("strategy replay");
+        assert_eq!(out.steps.len(), 3);
+        assert_eq!(out.steps[0].bar_index, 20);
+        assert_eq!(out.steps[2].bar_index, 22);
     }
 }
