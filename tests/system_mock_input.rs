@@ -48,6 +48,34 @@ fn system_test_request_deserializes_and_accepts_candles_alias() {
 }
 
 #[test]
+fn system_test_bundled_btcusd_1m_deserializes() {
+    let value = json!({
+        "bar_interval": "1m",
+        "bundled_btcusd_1m": { "from": "2012-01-01", "to": "2012-01-02" }
+    });
+    let parsed = serde_json::from_value::<MachineRequest>(value).expect("deserialize");
+    assert!(parsed.candles.is_empty());
+    let b = parsed.bundled_btcusd_1m.as_ref().expect("bundled");
+    assert_eq!(b.from.as_deref(), Some("2012-01-01"));
+    assert_eq!(b.to.as_deref(), Some("2012-01-02"));
+    assert!(!b.all);
+}
+
+#[test]
+fn system_test_synthetic_series_deserializes() {
+    let value = json!({
+        "bar_interval": "15m",
+        "synthetic_series": { "bar_count": 50 }
+    });
+    let parsed = serde_json::from_value::<MachineRequest>(value).expect("deserialize");
+    assert!(parsed.candles.is_empty());
+    assert_eq!(
+        parsed.synthetic_series.as_ref().expect("syn").bar_count,
+        Some(50)
+    );
+}
+
+#[test]
 fn system_test_rejects_invalid_numeric_macro_event_code() {
     let request_json = build_mock_request_json();
     let mut value: Value = serde_json::from_str(&request_json).expect("request json value");

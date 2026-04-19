@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::Context as _;
 use binance_BTC::domain::SystemMode;
 use binance_BTC::strategy::decision::SignalDecision;
-use binance_BTC::{strategy_engine_for, DecisionMachine, MachineRequest, StrategyConfig};
+use binance_BTC::{DecisionMachine, MachineRequest, StrategyConfig, strategy_engine_for};
 use serde::Deserialize;
 
 #[derive(Debug, PartialEq)]

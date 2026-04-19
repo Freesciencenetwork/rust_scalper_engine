@@ -7,8 +7,7 @@
 
 use crate::config::StrategyConfig;
 
-const NOTE_HIGHER_TF_FIELDS: &str =
-    "Uses the internal higher-TF rollup (every `higher_tf_factor` consecutive rows = one bucket). Warmup count is approximate and depends on your configured factor.";
+const NOTE_HIGHER_TF_FIELDS: &str = "Uses the internal higher-TF rollup (every `higher_tf_factor` consecutive rows = one bucket). Warmup count is approximate and depends on your configured factor.";
 
 /// Extra context for paths that need the higher-TF rollup caveat (surfaced in catalog + API docs).
 pub fn path_note(path: &str) -> Option<&'static str> {
@@ -34,11 +33,13 @@ pub fn min_bars_required_for_path(path: &str, cfg: &StrategyConfig) -> Option<u3
         "atr" => return Some(cfg.atr_period as u32 + 1),
         "atr_pct" => return Some(cfg.atr_period as u32 + 1),
         "atr_pct_baseline" => return Some(cfg.vol_baseline_lookback_bars as u32),
-        "vol_ratio" => return Some(
-            (cfg.vol_baseline_lookback_bars)
-                .max(cfg.atr_period + 1)
-                .max(2) as u32,
-        ),
+        "vol_ratio" => {
+            return Some(
+                (cfg.vol_baseline_lookback_bars)
+                    .max(cfg.atr_period + 1)
+                    .max(2) as u32,
+            );
+        }
         "cvd_ema3" => return Some(8),
         "cvd_ema3_slope" => return Some(12),
         "vp_val" | "vp_poc" | "vp_vah" => {
@@ -127,7 +128,8 @@ fn min_bars_for_snapshot_path(rest: &str, _cfg: &StrategyConfig) -> Option<u32> 
     }
 
     if rest.starts_with("volatility.") {
-        if rest.starts_with("volatility.pivot_classic.") || rest.starts_with("volatility.pivot_fib.")
+        if rest.starts_with("volatility.pivot_classic.")
+            || rest.starts_with("volatility.pivot_fib.")
         {
             return Some(2);
         }

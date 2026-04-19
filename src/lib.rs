@@ -6,6 +6,7 @@ pub mod catalog;
 pub mod config;
 pub mod context;
 pub mod domain;
+pub mod historical_data;
 pub mod indicators;
 pub mod machine;
 pub mod market_data;
@@ -19,18 +20,19 @@ pub use catalog::{
 };
 pub use config::{StrategyConfig, VwapAnchorMode};
 pub use domain::{Candle, MacroEvent, SymbolFilters};
+pub use historical_data::BundledBtcUsd1m;
 pub use indicators::{VolumeProfileZones, volume_profile_zones};
 pub use machine::{
     ConfigOverrides, DecisionMachine, EvaluateIndicatorError, EvaluateStrategyError,
-    IndicatorEvaluateResponse, IndicatorReplayRequest, IndicatorReplayResponse, IndicatorReplayStep,
-    IndicatorValueReport, MachineCapabilities, MachineRequest, RuntimeState, StrategyReplayRequest,
-    StrategyReplayResponse, StrategyReplayStep,
+    IndicatorEvaluateResponse, IndicatorReplayRequest, IndicatorReplayResponse,
+    IndicatorReplayStep, IndicatorValueReport, MachineCapabilities, MachineRequest, RuntimeState,
+    StrategyReplayRequest, StrategyReplayResponse, StrategyReplayStep, SyntheticSeries,
 };
-pub use strategies::supported_strategy_ids;
 pub use market_data::{
     CandlestickPatternSnapshot, DirectionalSnapshot, IchimokuSnapshot, IndicatorSnapshot,
     MomentumSnapshot, PivotClassicSnapshot, PivotFibSnapshot, PreparedCandle, PreparedDataset,
     TrendSnapshot, VolatilitySnapshot, VolumeSnapshot,
 };
 pub use strategies::default::StrategyEngine;
+pub use strategies::supported_strategy_ids;
 pub use strategies::{Strategy, strategy_engine_for};

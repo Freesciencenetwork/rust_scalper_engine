@@ -102,8 +102,8 @@ mod tests {
     use crate::config::StrategyConfig;
     use crate::domain::Candle;
     use crate::market_data::{
-        snapshot::{IndicatorSnapshot, VolumeSnapshot},
         PreparedCandle, PreparedDataset,
+        snapshot::{IndicatorSnapshot, VolumeSnapshot},
     };
 
     fn frame_at(minute: i64, high: f64, close: f64, cmf: f64) -> PreparedCandle {
@@ -164,9 +164,11 @@ mod tests {
         });
 
         let decision = engine.evaluate_signal(20, &dataset);
-        assert!(!decision
-            .reasons
-            .iter()
-            .any(|reason| reason == "close_not_at_donchian_upper"));
+        assert!(
+            !decision
+                .reasons
+                .iter()
+                .any(|reason| reason == "close_not_at_donchian_upper")
+        );
     }
 }

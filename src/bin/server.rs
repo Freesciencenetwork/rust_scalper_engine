@@ -43,9 +43,9 @@ use axum::{
 };
 use binance_BTC::{
     CatalogIndicatorEntry, CatalogResponse, CatalogStrategyEntry, DecisionMachine,
-    EvaluateIndicatorError, EvaluateStrategyError, IndicatorEvaluateResponse, IndicatorReplayRequest,
-    IndicatorReplayResponse, MachineCapabilities, MachineRequest, StrategyConfig,
-    StrategyReplayRequest, StrategyReplayResponse,
+    EvaluateIndicatorError, EvaluateStrategyError, IndicatorEvaluateResponse,
+    IndicatorReplayRequest, IndicatorReplayResponse, MachineCapabilities, MachineRequest,
+    StrategyConfig, StrategyReplayRequest, StrategyReplayResponse,
 };
 use tower::limit::ConcurrencyLimitLayer;
 use tower::util::option_layer;
@@ -92,7 +92,10 @@ async fn main() -> anyhow::Result<()> {
 
     let v1_post = Router::new()
         .route("/indicators/{indicator_name}", post(evaluate_indicator))
-        .route("/indicators/{indicator_name}/replay", post(evaluate_indicator_replay))
+        .route(
+            "/indicators/{indicator_name}/replay",
+            post(evaluate_indicator_replay),
+        )
         .route("/indicators/replay", post(evaluate_indicators_replay))
         .route("/strategies/replay", post(evaluate_strategy_replay))
         .layer(option_layer(evaluate_concurrency_limit));
@@ -191,9 +194,9 @@ async fn evaluate_indicators_replay(
     Json(request): Json<IndicatorReplayRequest>,
 ) -> Result<Json<IndicatorReplayResponse>, IndicatorApiError> {
     if request.indicators.is_empty() {
-        return Err(IndicatorApiError(EvaluateIndicatorError::Dataset(
-            anyhow!("indicators list must be non-empty for POST /v1/indicators/replay"),
-        )));
+        return Err(IndicatorApiError(EvaluateIndicatorError::Dataset(anyhow!(
+            "indicators list must be non-empty for POST /v1/indicators/replay"
+        ))));
     }
     let path_strings: Vec<String> = request.indicators.clone();
     let paths: Vec<&str> = path_strings.iter().map(String::as_str).collect();

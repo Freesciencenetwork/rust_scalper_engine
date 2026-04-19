@@ -3,13 +3,14 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use anyhow::Result;
-use chrono::{DateTime, Utc};
+use anyhow::{Context, Result, anyhow};
+use chrono::{DateTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use crate::config::StrategyConfig;
 use crate::domain::{Candle, MacroEvent, SymbolFilters, SystemMode};
+use crate::historical_data::{BundledBtcUsd1m, load_btcusd_1m};
 use crate::market_data::PreparedDataset;
 use crate::strategies::strategy_engine_for;
 use crate::strategy::decision::SignalDecision;
@@ -22,10 +23,32 @@ pub struct RuntimeState {
     pub halt_new_entries_flag: u8,
 }
 
+/// Server-generated **uniform** OHLCV for demos and smoke tests. Mutually exclusive with a non-empty
+/// **`candles`** array: send either real `candles` **or** this block.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyntheticSeries {
+    /// Milliseconds between consecutive bar `close_time` values. Omit when top-level **`bar_interval`**
+    /// is set to a parseable label (e.g. `"15m"`, `"1h"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bar_step_ms: Option<u64>,
+    /// First bar close time (UTC epoch **milliseconds**). Defaults to a fixed anchor when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_close_ms: Option<i64>,
+    /// Last bar close time (**inclusive**). Ignored when **`bar_count`** is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_close_ms: Option<i64>,
+    /// Exact number of bars from **`start_close_ms`**. When **`end_close_ms`** and **`bar_count`** are both
+    /// absent, defaults to **512** bars.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bar_count: Option<u32>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MachineRequest {
     /// Closed OHLCV bars, **oldest first**. JSON may use **`candles_15m`** as a backward-compat alias for this field.
-    #[serde(alias = "candles_15m")]
+    /// Leave empty when using [`SyntheticSeries`] or [`crate::historical_data::BundledBtcUsd1m`] instead.
+    #[serde(default, alias = "candles_15m")]
     pub candles: Vec<Candle>,
     /// Optional label for what each row represents (e.g. `"15m"`, `"1h"`, `"4h"`). The engine still
     /// treats the series as **uniform steps**; warmup hints are expressed in **row counts**, not minutes.
@@ -39,6 +62,11 @@ pub struct MachineRequest {
     pub symbol_filters: Option<SymbolFilters>,
     #[serde(default)]
     pub config_overrides: Option<ConfigOverrides>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub synthetic_series: Option<SyntheticSeries>,
+    /// Bundled **`btcusd_1-min_data.csv`** slice (UTC calendar **`from`**/**`to`** or **`all: true`**).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundled_btcusd_1m: Option<BundledBtcUsd1m>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -226,6 +254,10 @@ impl std::error::Error for EvaluateStrategyError {
 /// Hard cap for replay-style endpoints (indicator + strategy linear walk) — HTTP / batch safety.
 const MAX_REPLAY_STEPS: usize = 50_000;
 
+const DEFAULT_SYNTHETIC_BAR_COUNT: u32 = 512;
+const DEFAULT_SYNTHETIC_START_MS: i64 = 1_700_000_000_000;
+const MAX_SYNTHETIC_BARS: usize = 500_000;
+
 struct EvaluationContext {
     config: StrategyConfig,
     dataset: PreparedDataset,
@@ -239,6 +271,8 @@ fn build_machine_capabilities() -> MachineCapabilities {
         supported_actions: vec!["stand_aside".to_string(), "arm_long_stop".to_string()],
         accepted_inputs: vec![
             "candles".to_string(),
+            "synthetic_series".to_string(),
+            "bundled_btcusd_1m".to_string(),
             "macro_events_numeric".to_string(),
             "symbol_filters".to_string(),
             "runtime_state_numeric".to_string(),
@@ -453,7 +487,8 @@ impl DecisionMachine {
         let mut steps = Vec::with_capacity(estimated);
         let mut i = from_idx;
         while i <= to_idx {
-            let mut engine = strategy_engine_for(&ctx.config).map_err(EvaluateStrategyError::Dataset)?;
+            let mut engine =
+                strategy_engine_for(&ctx.config).map_err(EvaluateStrategyError::Dataset)?;
             engine.set_system_mode(mode);
             engine.replay_failed_acceptance_window(0, i, &ctx.dataset);
             let decision = engine.decide(i, &ctx.dataset);
@@ -465,10 +500,7 @@ impl DecisionMachine {
             });
             i = i.saturating_add(step);
         }
-        Ok(StrategyReplayResponse {
-            strategy_id,
-            steps,
-        })
+        Ok(StrategyReplayResponse { strategy_id, steps })
     }
 
     fn build_evaluation_context(&self, request: MachineRequest) -> Result<EvaluationContext> {
@@ -477,19 +509,180 @@ impl DecisionMachine {
     }
 }
 
+fn bar_interval_label_to_ms(label: &str) -> Option<u64> {
+    let t = label.trim();
+    if t.is_empty() {
+        return None;
+    }
+    let lower = t.to_ascii_lowercase();
+    let (num, mult): (&str, u64) = if let Some(rest) = lower.strip_suffix('m') {
+        (rest, 60 * 1000)
+    } else if let Some(rest) = lower.strip_suffix('h') {
+        (rest, 3600 * 1000)
+    } else if let Some(rest) = lower.strip_suffix('d') {
+        (rest, 86_400 * 1000)
+    } else if let Some(rest) = lower.strip_suffix('w') {
+        (rest, 7 * 86_400 * 1000)
+    } else {
+        return None;
+    };
+    let n: u64 = num.parse().ok()?;
+    (n > 0).then_some(n.checked_mul(mult)?)
+}
+
+fn count_synthetic_bars(spec: &SyntheticSeries, step_ms: i64) -> Result<usize> {
+    if let Some(c) = spec.bar_count {
+        if c == 0 {
+            return Err(anyhow!("synthetic_series.bar_count must be >= 1"));
+        }
+        let n = usize::try_from(c).map_err(|_| anyhow!("bar_count too large"))?;
+        if n > MAX_SYNTHETIC_BARS {
+            return Err(anyhow!(
+                "synthetic_series.bar_count {c} exceeds cap {MAX_SYNTHETIC_BARS}"
+            ));
+        }
+        return Ok(n);
+    }
+    if let Some(end_ms) = spec.end_close_ms {
+        let start_ms = spec.start_close_ms.unwrap_or(DEFAULT_SYNTHETIC_START_MS);
+        if end_ms < start_ms {
+            return Err(anyhow!(
+                "synthetic_series.end_close_ms must be >= start_close_ms"
+            ));
+        }
+        let span = i128::from(end_ms - start_ms);
+        let step = i128::from(step_ms);
+        let n128 = span / step + 1;
+        let cap = i128::try_from(MAX_SYNTHETIC_BARS).unwrap_or(i128::MAX);
+        if n128 < 1 || n128 > cap {
+            return Err(anyhow!(
+                "synthetic time range produces an invalid bar count (cap {MAX_SYNTHETIC_BARS})"
+            ));
+        }
+        return usize::try_from(n128).map_err(|_| anyhow!("bar count overflow"));
+    }
+    let n = usize::try_from(DEFAULT_SYNTHETIC_BAR_COUNT).unwrap();
+    if n > MAX_SYNTHETIC_BARS {
+        return Err(anyhow!("internal synthetic default exceeds cap"));
+    }
+    Ok(n)
+}
+
+fn build_synthetic_candles(
+    spec: &SyntheticSeries,
+    bar_interval: &Option<String>,
+) -> Result<Vec<Candle>> {
+    let step_ms_i64 = spec
+        .bar_step_ms
+        .map(|u| i64::try_from(u).context("bar_step_ms does not fit i64"))
+        .transpose()?
+        .or_else(|| {
+            bar_interval
+                .as_deref()
+                .and_then(bar_interval_label_to_ms)
+                .and_then(|u| i64::try_from(u).ok())
+        })
+        .ok_or_else(|| {
+            anyhow!(
+                "synthetic_series needs `bar_step_ms` or a parseable top-level `bar_interval` (e.g. \"15m\", \"1h\")"
+            )
+        })?;
+    if step_ms_i64 <= 0 {
+        return Err(anyhow!("bar_step_ms must be > 0"));
+    }
+    let start_ms = spec.start_close_ms.unwrap_or(DEFAULT_SYNTHETIC_START_MS);
+    let n = count_synthetic_bars(spec, step_ms_i64)?;
+    let _ = Utc
+        .timestamp_millis_opt(start_ms)
+        .single()
+        .ok_or_else(|| anyhow!("invalid start_close_ms"))?;
+
+    let mut out = Vec::with_capacity(n);
+    let mut price = 50_000.0_f64;
+    for i in 0..n {
+        let ms = start_ms
+            .checked_add(
+                i64::try_from(i)
+                    .context("bar index")?
+                    .checked_mul(step_ms_i64)
+                    .ok_or_else(|| anyhow!("synthetic timestamp overflow"))?,
+            )
+            .ok_or_else(|| anyhow!("synthetic timestamp overflow"))?;
+        let close_time = Utc
+            .timestamp_millis_opt(ms)
+            .single()
+            .ok_or_else(|| anyhow!("invalid synthetic bar timestamp at index {i}"))?;
+        let open = price;
+        price += 10.0;
+        let close = price;
+        let high = close + 5.0;
+        let low = open - 3.0;
+        let vol = 100.0 + i as f64;
+        let buy_v = vol * 0.62;
+        let sell_v = vol - buy_v;
+        out.push(Candle {
+            close_time,
+            open,
+            high,
+            low,
+            close,
+            volume: vol,
+            buy_volume: Some(buy_v),
+            sell_volume: Some(sell_v),
+            delta: None,
+        });
+    }
+    Ok(out)
+}
+
+fn resolve_candles(
+    candles: Vec<Candle>,
+    synthetic: Option<&SyntheticSeries>,
+    bundled: Option<&BundledBtcUsd1m>,
+    bar_interval: &Option<String>,
+) -> Result<Vec<Candle>> {
+    let n_src = (!candles.is_empty() as u8) + synthetic.is_some() as u8 + bundled.is_some() as u8;
+    if n_src > 1 {
+        return Err(anyhow!(
+            "choose exactly one data source: non-empty `candles`, `synthetic_series`, or `bundled_btcusd_1m`"
+        ));
+    }
+    if !candles.is_empty() {
+        return Ok(candles);
+    }
+    if let Some(b) = bundled {
+        return load_btcusd_1m(b);
+    }
+    if let Some(spec) = synthetic {
+        return build_synthetic_candles(spec, bar_interval);
+    }
+    Err(anyhow!(
+        "empty `candles`: provide bars, `synthetic_series`, or `bundled_btcusd_1m`"
+    ))
+}
+
 fn merge_request_and_build_dataset(
     base_config: &StrategyConfig,
     request: MachineRequest,
 ) -> Result<(StrategyConfig, PreparedDataset)> {
     let MachineRequest {
         candles,
-        bar_interval: _,
+        bar_interval,
         macro_events,
         runtime_state: _,
         account_equity: _,
         symbol_filters,
         config_overrides,
+        synthetic_series,
+        bundled_btcusd_1m,
     } = request;
+
+    let candles = resolve_candles(
+        candles,
+        synthetic_series.as_ref(),
+        bundled_btcusd_1m.as_ref(),
+        &bar_interval,
+    )?;
 
     let mut config = base_config.clone();
 
@@ -595,10 +788,12 @@ mod tests {
         let machine = DecisionMachine::default();
         let capabilities = machine.capabilities();
         assert!(!capabilities.execution_enabled);
-        assert!(capabilities
-            .supported_actions
-            .iter()
-            .any(|value| value == "arm_long_stop"));
+        assert!(
+            capabilities
+                .supported_actions
+                .iter()
+                .any(|value| value == "arm_long_stop")
+        );
     }
 
     #[test]
@@ -630,6 +825,8 @@ mod tests {
             account_equity: Some(100_000.0),
             symbol_filters: None,
             config_overrides: None,
+            synthetic_series: None,
+            bundled_btcusd_1m: None,
         };
 
         let out = machine
@@ -668,6 +865,8 @@ mod tests {
             account_equity: None,
             symbol_filters: None,
             config_overrides: None,
+            synthetic_series: None,
+            bundled_btcusd_1m: None,
         };
         let err = machine
             .evaluate_indicator("not_a_catalog_leaf", req)
@@ -701,6 +900,78 @@ mod tests {
     }
 
     #[test]
+    fn evaluate_indicator_from_synthetic_series() {
+        use super::{DecisionMachine, MachineRequest, RuntimeState, SyntheticSeries};
+
+        let machine = DecisionMachine::default();
+        let req = MachineRequest {
+            candles: Vec::new(),
+            bar_interval: Some("15m".to_string()),
+            macro_events: Vec::new(),
+            runtime_state: RuntimeState::default(),
+            account_equity: None,
+            symbol_filters: None,
+            config_overrides: None,
+            synthetic_series: Some(SyntheticSeries {
+                bar_step_ms: None,
+                start_close_ms: None,
+                end_close_ms: None,
+                bar_count: Some(120),
+            }),
+            bundled_btcusd_1m: None,
+        };
+        let out = machine
+            .evaluate_indicator("ema_fast", req)
+            .expect("synthetic ema_fast");
+        assert_eq!(out.report.bars_available, 120);
+        assert!(out.report.computable);
+    }
+
+    #[test]
+    fn merge_rejects_candles_plus_synthetic() {
+        use chrono::{TimeZone, Utc};
+
+        use super::{DecisionMachine, MachineRequest, RuntimeState, SyntheticSeries};
+        use crate::domain::Candle;
+
+        let machine = DecisionMachine::default();
+        let t = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let one = Candle {
+            close_time: t,
+            open: 1.0,
+            high: 2.0,
+            low: 0.5,
+            close: 1.5,
+            volume: 10.0,
+            buy_volume: None,
+            sell_volume: None,
+            delta: None,
+        };
+        let req = MachineRequest {
+            candles: vec![one],
+            bar_interval: Some("15m".to_string()),
+            macro_events: Vec::new(),
+            runtime_state: RuntimeState::default(),
+            account_equity: None,
+            symbol_filters: None,
+            config_overrides: None,
+            synthetic_series: Some(SyntheticSeries {
+                bar_step_ms: None,
+                start_close_ms: None,
+                end_close_ms: None,
+                bar_count: Some(10),
+            }),
+            bundled_btcusd_1m: None,
+        };
+        let err = machine.evaluate_indicator("ema_fast", req).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("candles") && msg.contains("synthetic_series"),
+            "{msg}"
+        );
+    }
+
+    #[test]
     fn evaluate_strategy_replay_linear_window() {
         use chrono::{Duration, TimeZone, Utc};
 
@@ -715,7 +986,10 @@ mod tests {
             ..Default::default()
         };
         let machine = DecisionMachine::new(config);
-        let base = Utc.with_ymd_and_hms(2026, 4, 15, 0, 15, 0).single().unwrap();
+        let base = Utc
+            .with_ymd_and_hms(2026, 4, 15, 0, 15, 0)
+            .single()
+            .unwrap();
         let candles: Vec<Candle> = (0..24)
             .map(|i| Candle {
                 close_time: base + Duration::minutes(15 * i as i64),
@@ -738,12 +1012,16 @@ mod tests {
                 account_equity: None,
                 symbol_filters: None,
                 config_overrides: None,
+                synthetic_series: None,
+                bundled_btcusd_1m: None,
             },
             from_index: Some(20),
             to_index: Some(22),
             step: Some(1),
         };
-        let out = machine.evaluate_strategy_replay(req).expect("strategy replay");
+        let out = machine
+            .evaluate_strategy_replay(req)
+            .expect("strategy replay");
         assert_eq!(out.steps.len(), 3);
         assert_eq!(out.steps[0].bar_index, 20);
         assert_eq!(out.steps[2].bar_index, 22);

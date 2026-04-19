@@ -1,7 +1,8 @@
-/target
+!.env.example
 .DS_Store
-.cursor/
 .claude/
+.cursor/
 .env
 .env.*
-!.env.example
+/target
+src/historical_data/btcusd_1-min_data.csv

@@ -1,5 +1,5 @@
-use anyhow::{Result, bail};
 use crate::domain::Candle;
+use anyhow::{Result, bail};
 
 /// Aggregate `candles` into higher-timeframe bars by grouping every `factor` consecutive bars.
 ///
@@ -25,7 +25,10 @@ pub fn aggregate_to_higher_tf(candles: &[Candle], factor: usize) -> Result<Vec<C
         let group = &candles[g * factor..(g + 1) * factor];
         let first = &group[0];
         let last = &group[group.len() - 1];
-        let high = group.iter().map(|c| c.high).fold(f64::NEG_INFINITY, f64::max);
+        let high = group
+            .iter()
+            .map(|c| c.high)
+            .fold(f64::NEG_INFINITY, f64::max);
         let low = group.iter().map(|c| c.low).fold(f64::INFINITY, f64::min);
         let volume: f64 = group.iter().map(|c| c.volume).sum();
         let buy_volume = sum_optional(group.iter().map(|c| c.buy_volume));

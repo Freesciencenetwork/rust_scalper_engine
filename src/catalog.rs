@@ -210,8 +210,9 @@ mod tests {
         let mut m = BTreeMap::new();
         let v = serde_json::to_value(sample_prepared_candle()).unwrap();
         flatten_object_leaves("", &v, &mut m);
-        assert!(m.contains_key(
-            "indicator_snapshot.momentum.rsi_14"
-        ) || m.keys().any(|k| k.ends_with(".rsi_14")));
+        assert!(
+            m.contains_key("indicator_snapshot.momentum.rsi_14")
+                || m.keys().any(|k| k.ends_with(".rsi_14"))
+        );
     }
 }

@@ -171,7 +171,10 @@ fn assert_prepared_fields_finite(frame: &binance_BTC::PreparedCandle) {
 
 /// Synthetic bars stepping 15 minutes from 00:15 UTC (any timeframe label; engine is bar-count based).
 fn synthetic_candles_15m(count: usize) -> Vec<Candle> {
-    assert!(count >= 4, "need at least 4 bars to form one higher-TF bar at default factor");
+    assert!(
+        count >= 4,
+        "need at least 4 bars to form one higher-TF bar at default factor"
+    );
     let base = Utc.with_ymd_and_hms(2026, 1, 5, 0, 0, 0).unwrap();
     let mut out = Vec::with_capacity(count);
     let mut price = 100.0_f64;

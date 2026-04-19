@@ -46,7 +46,7 @@ mod tests {
     use super::active;
     use crate::config::StrategyConfig;
     use crate::domain::Candle;
-    use crate::market_data::{snapshot::IndicatorSnapshot, PreparedCandle, PreparedDataset};
+    use crate::market_data::{PreparedCandle, PreparedDataset, snapshot::IndicatorSnapshot};
 
     fn frame_at(minute: i64, high: f64, close: f64, atr: f64) -> PreparedCandle {
         PreparedCandle {
