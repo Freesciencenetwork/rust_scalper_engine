@@ -6,3 +6,6 @@
 .env.*
 /target
 src/historical_data/btcusd_1-min_data.csv
+src/historical_data/request.json
+src/historical_data/request.trimmed.json
+src/historical_data/request.json.partial

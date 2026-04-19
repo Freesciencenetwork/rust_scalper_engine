@@ -13,6 +13,9 @@ Indicator endpoints
 Strategy linear replay
   • POST /v1/strategies/replay — JSON steps with per-bar SignalDecision (optional from_index, to_index, step).
 
+Replay bodies are the same flattened MachineRequest as last-bar POSTs (candles, or bundled_btcusd_1m,
+or synthetic_series) plus from_index / to_index / step; multi replay adds "indicators": [...].
+
 Run the server (shorter warmup in dev):
   VOL_BASELINE_LOOKBACK_BARS=96 cargo run
 
@@ -22,6 +25,8 @@ Then:
   python3 examples/engine_http_client.py --replay
   python3 examples/engine_http_client.py --strategy-replay
   ENGINE_URL=http://127.0.0.1:8080 python3 examples/engine_http_client.py
+
+For an explicit replay JSON body (file vs bundled, indices, print request/response), see **`examples/replay_request_file.py`**.
 """
 
 from __future__ import annotations

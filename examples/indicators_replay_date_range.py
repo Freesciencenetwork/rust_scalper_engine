@@ -2,17 +2,20 @@
 """
 Example: replay **three** catalog indicators over candles restricted to **2010-01-01 … 2012-12-31** (UTC).
 
+Alternatively use **`bundled_btcusd_1m`** + **`from`/`to`** in JSON (no local candle file) — see README.
+
 Flow
   1. Build or load `candles` (each row must have `close_time` in **milliseconds**).
   2. **Filter** rows by `close_time` — the engine has no `start_year` parameter; your timeframe is the
      array you POST.
   3. `POST /v1/indicators/replay` with a non-empty `indicators` list (exact dot-paths from `GET /v1/catalog`).
 
-Requires: running server (`cargo run`), and a large enough `request.json` or embedded candles for the range.
+Requires: running server (`cargo run`), and a large enough POST body (e.g. `src/historical_data/request.json`
+from `cargo run --release --bin fetch_max_btcusdt_1m` or a one-page `binance-fetch`) or embedded candles.
 
 Usage:
-  python3 examples/indicators_replay_date_range.py path/to/request.json
-  ENGINE_URL=http://127.0.0.1:8080 python3 examples/indicators_replay_date_range.py path/to/request.json
+  python3 examples/indicators_replay_date_range.py src/historical_data/request.json
+  ENGINE_URL=http://127.0.0.1:8080 python3 examples/indicators_replay_date_range.py src/historical_data/request.json
 """
 
 from __future__ import annotations
@@ -46,7 +49,10 @@ def post_json(url: str, path: str, payload: dict) -> tuple[int, str]:
 
 def main() -> int:
     if len(sys.argv) < 2:
-        print("Usage: python3 examples/indicators_replay_date_range.py <request.json>", file=sys.stderr)
+        print(
+            "Usage: python3 examples/indicators_replay_date_range.py <path/to/request.json>",
+            file=sys.stderr,
+        )
         return 2
 
     path = sys.argv[1]

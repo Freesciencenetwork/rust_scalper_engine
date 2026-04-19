@@ -46,7 +46,7 @@ pub struct SyntheticSeries {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MachineRequest {
-    /// Closed OHLCV bars, **oldest first**. JSON may use **`candles_15m`** as a backward-compat alias for this field.
+    /// Closed OHLCV bars, **oldest first**. JSON may use **`candles_15m`** as a backward-compat alias (legacy name from `binance-fetch`; it does **not** imply the bars are 15m — use **`bar_interval`** for timeframe).
     /// Leave empty when using [`SyntheticSeries`] or [`crate::historical_data::BundledBtcUsd1m`] instead.
     #[serde(default, alias = "candles_15m")]
     pub candles: Vec<Candle>,
@@ -325,7 +325,7 @@ impl DecisionMachine {
 
     /// Flatten the **last** prepared bar and return [`IndicatorValueReport`] for a **single** catalog path.
     ///
-    /// `indicator_path` must match a leaf key exactly (same string as in `GET /v1/catalog` / `evaluate_multi` filters).
+    /// `indicator_path` must match a leaf key exactly (same string as in `GET /v1/catalog` → `indicators[].path`).
     pub fn evaluate_indicator(
         &self,
         indicator_path: &str,
