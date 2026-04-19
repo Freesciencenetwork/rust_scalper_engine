@@ -1,4 +1,4 @@
-//! Pluggable decision strategies; each reads [`PreparedDataset`](crate::market_data::PreparedDataset).
+//! Pluggable decision strategies; each reads [`crate::market_data::PreparedDataset`].
 
 pub mod bb_mean_reversion;
 pub mod default;
@@ -350,8 +350,10 @@ mod strategy_id_tests {
             ttm_squeeze_fire::TTM_SQUEEZE_FIRE_STRATEGY_ID,
             donchian_breakout::DONCHIAN_BREAKOUT_STRATEGY_ID,
         ] {
-            let mut config = StrategyConfig::default();
-            config.strategy_id = id.to_string();
+            let config = StrategyConfig {
+                strategy_id: id.to_string(),
+                ..Default::default()
+            };
             let engine = strategy_engine_for(&config).unwrap_or_else(|err| panic!("{id}: {err}"));
             assert_eq!(engine.id(), id);
         }

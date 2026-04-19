@@ -2,3 +2,6 @@
 .DS_Store
 .cursor/
 .claude/
+.env
+.env.*
+!.env.example

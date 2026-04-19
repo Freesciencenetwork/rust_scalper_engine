@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -87,9 +89,29 @@ pub struct MachineResponse {
     pub diagnostics: MachineDiagnostics,
 }
 
+fn build_machine_capabilities() -> MachineCapabilities {
+    MachineCapabilities {
+        machine_name: "binance_BTC_machine".to_string(),
+        machine_version: env!("CARGO_PKG_VERSION").to_string(),
+        execution_enabled: false,
+        supported_actions: vec!["stand_aside".to_string(), "arm_long_stop".to_string()],
+        accepted_inputs: vec![
+            "normalized_15m_candles".to_string(),
+            "macro_events_numeric".to_string(),
+            "symbol_filters".to_string(),
+            "runtime_state_numeric".to_string(),
+            "rustyfish_overlay_numeric".to_string(),
+        ],
+    }
+}
+
+/// Stateless per [`MachineRequest`]: evaluation uses only this immutable base config plus the
+/// request body (no server-side session). Safe to share behind [`std::sync::Arc`] across tasks
+/// and **horizontal replicas** (use identical env for the same logical machine).
 #[derive(Clone, Debug)]
 pub struct DecisionMachine {
     base_config: StrategyConfig,
+    capabilities: Arc<MachineCapabilities>,
 }
 
 impl Default for DecisionMachine {
@@ -100,33 +122,35 @@ impl Default for DecisionMachine {
 
 impl DecisionMachine {
     pub fn new(base_config: StrategyConfig) -> Self {
-        Self { base_config }
+        Self {
+            base_config,
+            capabilities: Arc::new(build_machine_capabilities()),
+        }
     }
 
-    pub fn capabilities(&self) -> MachineCapabilities {
-        MachineCapabilities {
-            machine_name: "binance_BTC_machine".to_string(),
-            machine_version: env!("CARGO_PKG_VERSION").to_string(),
-            execution_enabled: false,
-            supported_actions: vec!["stand_aside".to_string(), "arm_long_stop".to_string()],
-            accepted_inputs: vec![
-                "normalized_15m_candles".to_string(),
-                "macro_events_numeric".to_string(),
-                "symbol_filters".to_string(),
-                "runtime_state_numeric".to_string(),
-                "rustyfish_overlay_numeric".to_string(),
-            ],
-        }
+    /// Metadata built once in [`DecisionMachine::new`] (clone for JSON responses if needed).
+    pub fn capabilities(&self) -> &MachineCapabilities {
+        self.capabilities.as_ref()
     }
 
     pub fn evaluate(&self, request: MachineRequest) -> Result<MachineResponse> {
+        let MachineRequest {
+            candles_15m,
+            macro_events,
+            runtime_state,
+            account_equity,
+            symbol_filters,
+            rustyfish_overlay,
+            config_overrides,
+        } = request;
+
         let mut config = self.base_config.clone();
 
-        if let Some(filters) = request.symbol_filters.clone() {
+        if let Some(filters) = symbol_filters {
             config = config.with_symbol_filters(filters);
         }
 
-        if let Some(ov) = &request.config_overrides {
+        if let Some(ov) = &config_overrides {
             if let Some(v) = ov.min_target_move_pct {
                 config.min_target_move_pct = v;
             }
@@ -172,20 +196,17 @@ impl DecisionMachine {
             if let Some(v) = ov.vp_bin_count {
                 config.vp_bin_count = v;
             }
-            if let Some(v) = ov.strategy_id.clone() {
-                config.strategy_id = v;
+            if let Some(v) = ov.strategy_id.as_ref() {
+                config.strategy_id = v.clone();
             }
         }
 
-        let overlay = request
-            .rustyfish_overlay
-            .as_ref()
-            .map(map_report_to_overlay);
+        let overlay = rustyfish_overlay.as_ref().map(map_report_to_overlay);
         if let Some(overlay) = overlay.as_ref() {
             config = apply_overlay_to_config(&config, overlay);
         }
 
-        let dataset = PreparedDataset::build(&config, request.candles_15m, request.macro_events)?;
+        let mut dataset = PreparedDataset::build(&config, candles_15m, macro_events)?;
         let index = dataset
             .frames_15m
             .len()
@@ -193,8 +214,8 @@ impl DecisionMachine {
             .ok_or_else(|| anyhow::anyhow!("at least one closed 15m candle is required"))?;
 
         let mut strategy = strategy_engine_for(&config)?;
-        if request.runtime_state.halt_new_entries_flag != 0
-            || request.runtime_state.realized_net_r_today <= config.daily_loss_limit_r
+        if runtime_state.halt_new_entries_flag != 0
+            || runtime_state.realized_net_r_today <= config.daily_loss_limit_r
         {
             strategy.set_system_mode(SystemMode::Halted);
         }
@@ -207,13 +228,17 @@ impl DecisionMachine {
         strategy.replay_failed_acceptance_window(fa_start, index, &dataset);
 
         let decision = strategy.decide(index, &dataset);
-        let plan = build_plan(&config, &decision, request.account_equity);
+        let plan = build_plan(&config, &decision, account_equity);
         let action = if decision.allowed {
             MachineAction::ArmLongStop
         } else {
             MachineAction::StandAside
         };
-        let latest_frame = dataset.frames_15m[index].clone();
+        // `index` is always `frames_15m.len() - 1`; move the last frame out instead of cloning it.
+        let latest_frame = dataset
+            .frames_15m
+            .pop()
+            .ok_or_else(|| anyhow::anyhow!("at least one closed 15m candle is required"))?;
 
         Ok(MachineResponse {
             action,

@@ -50,6 +50,7 @@ The `server` binary exposes the same JSON contract over HTTP (Axum). It is a thi
 - **Port:** `PORT` environment variable, default `8080`
 - **Logs:** set `RUST_LOG` (e.g. `RUST_LOG=tower_http=trace,binance_BTC=info`)
 - **Shorter history (optional):** `VOL_BASELINE_LOOKBACK_BARS` (default `960`). Set to **`96`** so the latest bar only needs **96** closed `15m` candles in each request (looser vol-baseline; fine for dev / smaller payloads). Example: `VOL_BASELINE_LOOKBACK_BARS=96 cargo run`.
+- **Horizontal scaling:** Each instance is **stateless** (all bar data and overrides are in the `POST` body; the in-memory `DecisionMachine` is read-only after startup). Run **N** identical replicas behind a load balancer; total throughput scales with **N × per-box hardware** (no sticky sessions). Keep optional env vars (`EVALUATE_API_KEY`, `VOL_BASELINE_LOOKBACK_BARS`, …) aligned across replicas when you use them. **`EVALUATE_MAX_INFLIGHT`** is optional: leave it unset for **no** per-process concurrency cap on evaluate (hardware / OS bound only); set a positive integer to cap concurrent evaluates **per instance** for overload protection.
 
 **You do not wait wall-clock days to “collect” bars:** Binance REST returns **past** klines in one call (e.g. `binance-fetch … --limit 1000` gives ~10 days of `15m` history **immediately**). The default machine config still expects **960** bars in that payload unless you lower `VOL_BASELINE_LOOKBACK_BARS` as above.
 
