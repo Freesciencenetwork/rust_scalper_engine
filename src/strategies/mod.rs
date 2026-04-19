@@ -1,5 +1,7 @@
 //! Pluggable decision strategies; each reads [`crate::market_data::PreparedDataset`].
 
+#![allow(clippy::pedantic, clippy::nursery)] // Strategy gates: compact trading predicates; core lints enforced separately.
+
 pub mod bb_mean_reversion;
 pub mod default;
 pub mod donchian_breakout;

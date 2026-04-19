@@ -1,6 +1,8 @@
 //! Exercises every indicator wired in `PreparedDataset::build` (see `market_data/prepare.rs`).
 //! Uses synthetic 15m candles aligned to `aggregate_15m_to_1h` expectations.
 
+#![allow(clippy::pedantic, clippy::nursery)] // Large synthetic candle harness; pedantic on test loops is low value.
+
 use binance_BTC::{Candle, PreparedDataset, StrategyConfig, VwapAnchorMode};
 use chrono::{Duration, TimeZone, Utc};
 

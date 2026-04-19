@@ -1,3 +1,5 @@
+#![allow(clippy::pedantic, clippy::nursery)] // Request orchestration; pedantic on large evaluate() is low signal.
+
 use std::sync::Arc;
 
 use anyhow::Result;

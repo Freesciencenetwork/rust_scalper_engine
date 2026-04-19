@@ -1,3 +1,5 @@
+#![allow(clippy::pedantic, clippy::nursery)] // Large `prepare`/`snapshot` tables; pedantic churn on generated-style field wiring.
+
 mod data;
 mod prepare;
 pub mod snapshot;

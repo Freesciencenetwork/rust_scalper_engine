@@ -67,14 +67,15 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|&n| n > 0);
     let evaluate_concurrency_limit = evaluate_max_inflight.map(ConcurrencyLimitLayer::new);
-    match evaluate_max_inflight {
-        Some(n) => tracing::info!(
+    if let Some(n) = evaluate_max_inflight {
+        tracing::info!(
             evaluate_max_inflight = n,
             "EVALUATE_MAX_INFLIGHT: concurrent POST /v1/evaluate capped per process"
-        ),
-        None => tracing::info!(
+        );
+    } else {
+        tracing::info!(
             "EVALUATE_MAX_INFLIGHT unset: no per-process evaluate concurrency cap (horizontal scale + hardware bound)"
-        ),
+        );
     }
 
     let machine = Arc::new(machine_from_env());

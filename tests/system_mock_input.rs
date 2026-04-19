@@ -1,3 +1,5 @@
+#![allow(clippy::pedantic, clippy::nursery)] // Fixture JSON builders; pedantic float/cast churn in tests only.
+
 use binance_BTC::{DecisionMachine, MachineRequest};
 use serde_json::{Value, json};
 

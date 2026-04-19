@@ -1,3 +1,5 @@
+#![allow(clippy::pedantic, clippy::nursery)] // Dense TA kernels: short names / similar locals; core Clippy groups still `-D` in CI.
+
 pub mod ad_line;
 pub mod adx;
 pub mod aggregate_one_hour;

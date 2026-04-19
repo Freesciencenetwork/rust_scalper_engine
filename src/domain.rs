@@ -1,3 +1,5 @@
+#![allow(clippy::pedantic, clippy::nursery)] // Wire types + serde helpers; nursery/pedantic on enums/serde is noisy.
+
 pub use binance_spot_candles::domain::{Candle, SymbolFilters};
 
 use chrono::{DateTime, Utc};

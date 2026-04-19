@@ -1,3 +1,5 @@
+#![allow(clippy::pedantic, clippy::nursery)] // Small config surface; pedantic on serde defaults is noisy here.
+
 use serde::{Deserialize, Serialize};
 
 use crate::domain::SymbolFilters;

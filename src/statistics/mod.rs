@@ -3,6 +3,8 @@
 //! This crate module is separate from [`crate::indicators`] (market / TA studies). Use it for
 //! distribution summaries, correlations, and simple linear models on numeric slices.
 
+#![allow(clippy::pedantic, clippy::nursery)] // Numeric stats helpers; pedantic naming noise vs math clarity.
+
 pub mod association;
 pub mod descriptive;
 pub mod rank;

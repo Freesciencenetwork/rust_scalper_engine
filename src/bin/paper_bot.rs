@@ -3,7 +3,7 @@
 
 //! Minimal **paper** loop: pull Binance `15m` history, run [`DecisionMachine`], print advice and a toy portfolio.
 //!
-//! Not execution-grade (no exchange, no real stops).  
+//! Not execution-grade (no exchange, no real stops).
 //! **Run:** `cargo run --bin paper_bot -- --help`
 
 use std::time::Duration;
@@ -54,6 +54,7 @@ struct PaperState {
 }
 
 #[tokio::main]
+#[allow(clippy::too_many_lines)] // Demo loop: CLI + fetch + print in one binary for readability.
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let mut config = StrategyConfig::default();
@@ -97,7 +98,7 @@ async fn main() -> Result<()> {
 
         let n = candles.len();
         let mark = candles.last().context("empty klines")?.close;
-        let equity_for_sizing = paper.usdt + paper.btc * mark;
+        let equity_for_sizing = paper.btc.mul_add(mark, paper.usdt);
 
         let request = MachineRequest {
             candles_15m: candles,
@@ -124,7 +125,7 @@ async fn main() -> Result<()> {
             paper.usdt,
             paper.btc,
             diag_close,
-            paper.usdt + paper.btc * diag_close,
+            paper.btc.mul_add(diag_close, paper.usdt),
             response.decision.reasons
         );
 
