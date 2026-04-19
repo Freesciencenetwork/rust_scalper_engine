@@ -22,9 +22,9 @@
 //! | GET | `/v1/strategies` | List all strategy entries. |
 //! | GET | `/v1/strategies/{id}` | Metadata for one strategy (404 if unknown). |
 //! | POST | `/v1/indicators/{name}` | Compute last-bar value for one indicator. |
-//! | POST | `/v1/indicators/{name}/replay` | Replay one indicator over a bar window. |
+//! | POST | `/v1/indicators/{name}/replay` | Replay one indicator (`from_index`/`to_index` or `replay_from`/`replay_to` UTC days). |
 //! | POST | `/v1/indicators/replay` | Replay multiple indicators (list in body) over a bar window. |
-//! | POST | `/v1/strategies/replay` | Linear strategy decisions over a bar index range (JSON). |
+//! | POST | `/v1/strategies/replay` | Linear strategy replay (same window fields as indicator replay). |
 
 #![allow(non_snake_case)] // Same package name as library crate (`binance_BTC`).
 #![allow(clippy::multiple_crate_versions)] // Transitive duplicates; see `lib.rs`.

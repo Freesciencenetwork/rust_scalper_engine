@@ -26,7 +26,7 @@ ENGINE = os.environ.get("ENGINE_URL", "http://127.0.0.1:8080").rstrip("/")
 # Bar source (pick exactly one shape in the body):
 #   "file"     — load `candles` (+ `bar_interval`) from JSON on disk
 #   "bundled"  — server reads CSV; use `bundled_btcusd_1m` with either `from`+`to` OR `all: true`
-DATA_SOURCE = "file"
+DATA_SOURCE = "bundled"
 CANDLE_JSON = REPO / "src/historical_data/request.json"
 
 # When DATA_SOURCE == "bundled" — UTC calendar days `YYYY-MM-DD`, or whole file:
@@ -36,10 +36,14 @@ USE_BUNDLED_ALL = False  # if True, body uses BUNDLED_ALL; else BUNDLED_FROM_TO
 
 BAR_INTERVAL = "1m"
 
-# Replay window: bar **indices** into the series the server built (NOT calendar dates).
-# Omit `to_index` in the JSON to mean “through the last bar” (server default).
+# Replay window — pick one style (server: see README / `IndicatorReplayRequest`):
+#   A) UTC calendar days on each bar's `close_time` (`YYYY-MM-DD`), inclusive:
+USE_REPLAY_DAYS = True
+REPLAY_FROM = "2012-01-02"
+REPLAY_TO = "2012-01-02"
+#   B) Bar indices (ignored if USE_REPLAY_DAYS). Omit TO_INDEX in JSON → through last bar.
 FROM_INDEX = 0
-TO_INDEX = 500  # set to None to drop the key and replay through the end
+TO_INDEX = 500  # or None
 STEP = 1
 
 # Indicators:
@@ -89,10 +93,14 @@ def build_body() -> tuple[dict, str, str]:
     else:
         raise SystemExit('DATA_SOURCE must be "file" or "bundled"')
 
-    body["from_index"] = FROM_INDEX
-    if TO_INDEX is not None:
-        body["to_index"] = TO_INDEX
     body["step"] = STEP
+    if USE_REPLAY_DAYS:
+        body["replay_from"] = REPLAY_FROM
+        body["replay_to"] = REPLAY_TO
+    else:
+        body["from_index"] = FROM_INDEX
+        if TO_INDEX is not None:
+            body["to_index"] = TO_INDEX
 
     if REPLAY_MODE == "multi":
         body["indicators"] = list(INDICATORS)

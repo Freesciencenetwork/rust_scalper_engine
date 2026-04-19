@@ -1,6 +1,7 @@
 # insights
 
-- **2026-04-19:** **`candles_15m`** = legacy **`binance-fetch`** key (not TF); **`fetch_max_btcusdt_1m`** writes **`candles`**. **`examples/replay_request_file.py`** = parameterized replay + print body/response.
+- **2026-04-19:** README API = **one line per route** (bullets), not a table.
+- **2026-04-19:** **`replay_from`** / **`replay_to`** (`YYYY-MM-DD` UTC) on replay bodies map to bar indices by **`close_time`**; override **`from_index`**/**`to_index`** when both set.
 - **2026-04-19:** Full Binance download = **`cargo run --release --bin fetch_max_btcusdt_1m`** (`binance_spot_candles::fetch_klines` loop); **`binance-fetch`** = single ≤1000 page. README **`curl`** uses **`src/historical_data/request.json`**; `.gitignore` **`request.json`** / **`request.trimmed.json`**.
 - **2026-04-19:** After dropping optional **`kaggle`** from `Cargo.toml`, run **`cargo generate-lockfile`** (or `cargo build`) so **`cargo test --locked`** succeeds; stale lock still listed `kaggle` until regen.
 - **2026-04-19 (perf):** `PreparedDataset::build` dominates per-request CPU/RAM; scale aggregate QPS with **N stateless replicas**. `EVALUATE_MAX_INFLIGHT` optional (unset = hardware/Tokio only; set = per-instance cap). Release LTO + last-bar `pop()` reduce waste.

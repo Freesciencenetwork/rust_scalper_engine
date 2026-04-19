@@ -3,15 +3,15 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use anyhow::{Context, Result, anyhow};
-use chrono::{DateTime, TimeZone, Utc};
+use anyhow::{Context, Result, anyhow, bail};
+use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use crate::config::StrategyConfig;
 use crate::domain::{Candle, MacroEvent, SymbolFilters, SystemMode};
 use crate::historical_data::{BundledBtcUsd1m, load_btcusd_1m};
-use crate::market_data::PreparedDataset;
+use crate::market_data::{PreparedCandle, PreparedDataset};
 use crate::strategies::strategy_engine_for;
 use crate::strategy::decision::SignalDecision;
 
@@ -159,19 +159,33 @@ impl std::error::Error for EvaluateIndicatorError {
 /// alongside `from_index` / `to_index` / `step`. Multi replay (`POST /v1/indicators/replay`) also
 /// requires non-empty `indicators`; the single-indicator URL variant ignores `indicators` (path
 /// comes from the URL).
+///
+/// **Calendar window:** set both **`replay_from`** and **`replay_to`** as UTC **`YYYY-MM-DD`**
+/// strings. The server picks every bar whose **`close_time`** lies in that inclusive UTC day range
+/// (midnight `replay_from` through end of `replay_to`). When both are set, they **override**
+/// **`from_index`** / **`to_index`**. Otherwise use indices (defaults: `0` … last bar).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IndicatorReplayRequest {
     #[serde(flatten)]
     pub machine: MachineRequest,
-    /// Inclusive start bar index (`0`..`len-1`). Default `0`.
+    /// Inclusive start bar index (`0`..`len-1`). Default `0`. Ignored when **`replay_from`** and
+    /// **`replay_to`** are both set.
     #[serde(default)]
     pub from_index: Option<usize>,
-    /// Inclusive end bar index. Default: last closed bar (`len-1`).
+    /// Inclusive end bar index. Default: last closed bar (`len-1`). Ignored when both replay day
+    /// fields are set.
     #[serde(default)]
     pub to_index: Option<usize>,
     /// Emit every Nth bar in the range (`>= 1`). Default `1`.
     #[serde(default)]
     pub step: Option<usize>,
+    /// Inclusive UTC calendar **start** day for replay, by each bar's **`close_time`** (`YYYY-MM-DD`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay_from: Option<String>,
+    /// Inclusive UTC calendar **end** day for replay (`YYYY-MM-DD`). Must be set together with
+    /// **`replay_from`**.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay_to: Option<String>,
     /// Dot-path strings from `GET /v1/catalog` → `indicators[].path`. Required (non-empty) for
     /// `POST /v1/indicators/replay`; ignored for the single-indicator URL variant.
     #[serde(default)]
@@ -203,6 +217,9 @@ pub struct IndicatorReplayResponse {
 /// fetched (15m, 1h, …). [`MachineRequest::bar_interval`] is only a label; replay uses **indices**
 /// into that array, not a separate timeframe selector. Defaults: `from_index = 0`, `to_index =
 /// last bar`, `step = 1` — walk the whole POSTed series linearly, capped at [`MAX_REPLAY_STEPS`].
+///
+/// **`replay_from`** / **`replay_to`** (`YYYY-MM-DD` UTC) work like [`IndicatorReplayRequest`]: when
+/// both are set they override **`from_index`** / **`to_index`**.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StrategyReplayRequest {
     #[serde(flatten)]
@@ -213,6 +230,10 @@ pub struct StrategyReplayRequest {
     pub to_index: Option<usize>,
     #[serde(default)]
     pub step: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay_from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay_to: Option<String>,
 }
 
 /// One bar’s [`SignalDecision`] after replaying failed-acceptance state through that index.
@@ -253,6 +274,18 @@ impl std::error::Error for EvaluateStrategyError {
 
 /// Hard cap for replay-style endpoints (indicator + strategy linear walk) — HTTP / batch safety.
 const MAX_REPLAY_STEPS: usize = 50_000;
+
+/// Minimum stride ≥ `requested_step` so that walking **`from_idx`…`to_idx`** emits at most
+/// **`max_steps`** replay points (`floor(span/step)+1` with `span = to_idx - from_idx`).
+fn effective_replay_step(span: usize, requested_step: usize, max_steps: usize) -> usize {
+    let requested = requested_step.max(1);
+    if span == 0 {
+        return requested;
+    }
+    let max_span_per_step = max_steps.saturating_sub(1).max(1);
+    let min_for_cap = span.div_ceil(max_span_per_step).max(1);
+    requested.max(min_for_cap)
+}
 
 const DEFAULT_SYNTHETIC_BAR_COUNT: u32 = 512;
 const DEFAULT_SYNTHETIC_START_MS: i64 = 1_700_000_000_000;
@@ -371,9 +404,7 @@ impl DecisionMachine {
                 "at least one indicator path is required"
             )));
         }
-        let from_idx = req.from_index.unwrap_or(0);
-        let to_idx_raw = req.to_index;
-        let step = req.step.unwrap_or(1).max(1);
+        let requested_step = req.step.unwrap_or(1).max(1);
         let ctx = self
             .build_evaluation_context(req.machine)
             .map_err(EvaluateIndicatorError::Dataset)?;
@@ -383,10 +414,15 @@ impl DecisionMachine {
                 "at least one closed candle is required"
             ))
         })?;
-        let mut to_idx = to_idx_raw.unwrap_or(last);
-        if to_idx > last {
-            to_idx = last;
-        }
+        let (from_idx, to_idx) = resolve_replay_window_indices(
+            &ctx.dataset.frames,
+            last,
+            req.from_index,
+            req.to_index,
+            req.replay_from.as_deref(),
+            req.replay_to.as_deref(),
+        )
+        .map_err(EvaluateIndicatorError::Dataset)?;
         if from_idx > to_idx {
             return Err(EvaluateIndicatorError::Dataset(anyhow::anyhow!(
                 "from_index ({from_idx}) must be <= to_index ({to_idx}) after clamping to bar_count-1 ({last})"
@@ -398,12 +434,19 @@ impl DecisionMachine {
             )));
         }
         let span = to_idx - from_idx;
-        let estimated = span / step + 1;
-        if estimated > MAX_REPLAY_STEPS {
-            return Err(EvaluateIndicatorError::Dataset(anyhow::anyhow!(
-                "replay would emit roughly {estimated} steps (from_index={from_idx}, to_index={to_idx}, step={step}; max {MAX_REPLAY_STEPS})"
-            )));
+        let step = effective_replay_step(span, requested_step, MAX_REPLAY_STEPS);
+        if step > requested_step {
+            tracing::warn!(
+                requested_step,
+                effective_step = step,
+                span,
+                from_idx,
+                to_idx,
+                "replay step raised to satisfy MAX_REPLAY_STEPS"
+            );
         }
+        let estimated = span / step + 1;
+        debug_assert!(estimated <= MAX_REPLAY_STEPS);
 
         let mut steps = Vec::with_capacity(estimated);
         let mut i = from_idx;
@@ -449,9 +492,7 @@ impl DecisionMachine {
         } else {
             SystemMode::Active
         };
-        let from_idx = req.from_index.unwrap_or(0);
-        let to_idx_raw = req.to_index;
-        let step = req.step.unwrap_or(1).max(1);
+        let requested_step = req.step.unwrap_or(1).max(1);
         let ctx = self
             .build_evaluation_context(req.machine)
             .map_err(EvaluateStrategyError::Dataset)?;
@@ -461,10 +502,15 @@ impl DecisionMachine {
                 "at least one closed candle is required"
             ))
         })?;
-        let mut to_idx = to_idx_raw.unwrap_or(last);
-        if to_idx > last {
-            to_idx = last;
-        }
+        let (from_idx, to_idx) = resolve_replay_window_indices(
+            &ctx.dataset.frames,
+            last,
+            req.from_index,
+            req.to_index,
+            req.replay_from.as_deref(),
+            req.replay_to.as_deref(),
+        )
+        .map_err(EvaluateStrategyError::Dataset)?;
         if from_idx > to_idx {
             return Err(EvaluateStrategyError::Dataset(anyhow::anyhow!(
                 "from_index ({from_idx}) must be <= to_index ({to_idx}) after clamping to bar_count-1 ({last})"
@@ -476,12 +522,19 @@ impl DecisionMachine {
             )));
         }
         let span = to_idx - from_idx;
-        let estimated = span / step + 1;
-        if estimated > MAX_REPLAY_STEPS {
-            return Err(EvaluateStrategyError::Dataset(anyhow::anyhow!(
-                "replay would emit roughly {estimated} steps (from_index={from_idx}, to_index={to_idx}, step={step}; max {MAX_REPLAY_STEPS})"
-            )));
+        let step = effective_replay_step(span, requested_step, MAX_REPLAY_STEPS);
+        if step > requested_step {
+            tracing::warn!(
+                requested_step,
+                effective_step = step,
+                span,
+                from_idx,
+                to_idx,
+                "strategy replay step raised to satisfy MAX_REPLAY_STEPS"
+            );
         }
+        let estimated = span / step + 1;
+        debug_assert!(estimated <= MAX_REPLAY_STEPS);
 
         let strategy_id = ctx.config.strategy_id.clone();
         let mut steps = Vec::with_capacity(estimated);
@@ -506,6 +559,72 @@ impl DecisionMachine {
     fn build_evaluation_context(&self, request: MachineRequest) -> Result<EvaluationContext> {
         let (config, dataset) = merge_request_and_build_dataset(&self.base_config, request)?;
         Ok(EvaluationContext { config, dataset })
+    }
+}
+
+/// Inclusive UTC calendar days by each bar's **`close_time`**: \[`replay_from` 00:00, `replay_to` end\].
+fn replay_day_range_to_indices(
+    frames: &[PreparedCandle],
+    replay_from: &str,
+    replay_to: &str,
+) -> Result<(usize, usize)> {
+    let from_d = NaiveDate::parse_from_str(replay_from.trim(), "%Y-%m-%d")
+        .with_context(|| format!("replay_from {replay_from:?} (expected YYYY-MM-DD UTC)"))?;
+    let to_d = NaiveDate::parse_from_str(replay_to.trim(), "%Y-%m-%d")
+        .with_context(|| format!("replay_to {replay_to:?} (expected YYYY-MM-DD UTC)"))?;
+    if to_d < from_d {
+        bail!("replay_to must be on or after replay_from");
+    }
+    let start = Utc
+        .with_ymd_and_hms(from_d.year(), from_d.month(), from_d.day(), 0, 0, 0)
+        .single()
+        .context("replay_from midnight")?;
+    let to_next = to_d.succ_opt().context("replay_to day overflow")?;
+    let end_exclusive = Utc
+        .with_ymd_and_hms(to_next.year(), to_next.month(), to_next.day(), 0, 0, 0)
+        .single()
+        .context("replay_to end bound")?;
+
+    let mut from_idx = None;
+    let mut to_idx = None;
+    for (i, fr) in frames.iter().enumerate() {
+        let ct = fr.candle.close_time;
+        if ct >= start && ct < end_exclusive {
+            if from_idx.is_none() {
+                from_idx = Some(i);
+            }
+            to_idx = Some(i);
+        }
+    }
+    match (from_idx, to_idx) {
+        (Some(a), Some(b)) if a <= b => Ok((a, b)),
+        _ => bail!(
+            "no bars with close_time in UTC [{replay_from} 00:00, {replay_to} 23:59:59.999] inclusive"
+        ),
+    }
+}
+
+fn resolve_replay_window_indices(
+    frames: &[PreparedCandle],
+    last: usize,
+    from_index: Option<usize>,
+    to_index: Option<usize>,
+    replay_from: Option<&str>,
+    replay_to: Option<&str>,
+) -> Result<(usize, usize)> {
+    match (replay_from, replay_to) {
+        (Some(fd), Some(td)) => replay_day_range_to_indices(frames, fd, td),
+        (None, None) => {
+            let from_idx = from_index.unwrap_or(0);
+            let mut to_idx = to_index.unwrap_or(last);
+            if to_idx > last {
+                to_idx = last;
+            }
+            Ok((from_idx, to_idx))
+        }
+        _ => bail!(
+            "set both replay_from and replay_to (YYYY-MM-DD UTC), or neither and use from_index/to_index"
+        ),
     }
 }
 
@@ -1018,6 +1137,8 @@ mod tests {
             from_index: Some(20),
             to_index: Some(22),
             step: Some(1),
+            replay_from: None,
+            replay_to: None,
         };
         let out = machine
             .evaluate_strategy_replay(req)
@@ -1025,5 +1146,58 @@ mod tests {
         assert_eq!(out.steps.len(), 3);
         assert_eq!(out.steps[0].bar_index, 20);
         assert_eq!(out.steps[2].bar_index, 22);
+    }
+
+    #[test]
+    fn indicator_replay_replay_from_to_utc_days_overrides_indices() {
+        use chrono::Duration;
+
+        use super::{DecisionMachine, IndicatorReplayRequest, MachineRequest, RuntimeState};
+        use crate::domain::Candle;
+
+        let machine = DecisionMachine::default();
+        let base = Utc
+            .with_ymd_and_hms(2026, 4, 15, 0, 15, 0)
+            .single()
+            .unwrap();
+        let candles: Vec<Candle> = (0..100)
+            .map(|i| Candle {
+                close_time: base + Duration::minutes(15 * i as i64),
+                open: 100.0,
+                high: 101.0,
+                low: 99.0,
+                close: 100.5,
+                volume: 10.0,
+                buy_volume: Some(6.0),
+                sell_volume: Some(4.0),
+                delta: None,
+            })
+            .collect();
+
+        let req = IndicatorReplayRequest {
+            machine: MachineRequest {
+                candles,
+                bar_interval: None,
+                macro_events: Vec::new(),
+                runtime_state: RuntimeState::default(),
+                account_equity: None,
+                symbol_filters: None,
+                config_overrides: None,
+                synthetic_series: None,
+                bundled_btcusd_1m: None,
+            },
+            from_index: Some(0),
+            to_index: Some(2),
+            step: Some(1),
+            replay_from: Some("2026-04-15".to_string()),
+            replay_to: Some("2026-04-15".to_string()),
+            indicators: Vec::new(),
+        };
+        let out = machine
+            .evaluate_indicator_replay(&["ema_fast"], req)
+            .expect("replay by day");
+        assert_eq!(out.steps.len(), 95);
+        assert_eq!(out.steps[0].bar_index, 0);
+        assert_eq!(out.steps[94].bar_index, 94);
     }
 }
