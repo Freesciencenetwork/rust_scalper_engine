@@ -1,31 +1,63 @@
 # rust_scalper_engine
 
-Pure Rust decision module for the BTC `15m` long-only continuation strategy. The Rust package name in `Cargo.toml` is `binance_BTC`.
+## In plain language
 
-The crate is intentionally a thinking machine:
+This project is a **small engine that reads recent Bitcoin price history** (the kind of “candlestick” summaries exchanges publish) and **tells you whether one specific long-only setup is “on” or “off”** according to a fixed set of rules. You can think of it as a **brain that only answers one question at a time**: “Given what just happened on the chart, does this strategy want to *prepare* for a possible long, or stay out?”
 
-- normalized market/context data goes in
-- algorithmic decision output comes out
-- no broker connectivity inside `DecisionMachine` (optional **`binance-fetch`** from [`binance_spot_candles`](https://crates.io/crates/binance_spot_candles) on crates.io reads public Spot data only)
-- no order execution
-- no backtest runner
-- no file-based runtime contract in the core API
+**What you get:** a clear **stand aside** vs **something to consider** style answer, plus reasons and diagnostics your own tools can log or display. Inputs and outputs are ordinary **JSON** so other languages and services can talk to it without digging into Rust first.
+
+**What you do not get:** it does **not** log into an exchange, **place orders**, or **manage risk or money** for you. It is **research and integration software**—useful if you already have (or plan to build) your own way to fetch data and, if you choose, send orders elsewhere.
+
+The rest of this README goes deeper (strategy idea, data shapes, optional demo server, and paper toy runs). **If you only read one technical line**, the summary in the next paragraph is the contract.
+
+> **In one sentence:** a **pure Rust** library that looks at **closed BTC 15m candles** (plus optional context) and answers: *arm a long **stop-entry** intent, or stand aside?* — **JSON in, JSON out**. It does **not** connect to a broker or place orders.
+
+The **Cargo package** name is **`binance_BTC`** (`Cargo.toml`); the **Git repo / folder** name is `rust_scalper_engine`.
+
+## Quick navigation
+
+| I want to… | Jump to |
+|------------|---------|
+| **Non-technical overview** | [In plain language](#in-plain-language) |
+| **Skim what it does and does not do** | [What this is](#what-this-is-and-is-not) (below) |
+| **Understand the trading idea** | [Theory of the engine](#theory-of-the-engine) |
+| **Integrate (Rust types + JSON)** | [Core boundary](#core-boundary) · [Machine schema](#machine-schema) |
+| **Run a quick demo** | [Paper bot](#paper-bot-demo) · [HTTP server](#http-server-optional) |
+| **Build a sample `MachineRequest` JSON** | [Binance data CLI](#binance-data-cli-binance-fetch) (`binance-fetch`) |
+| **See field shapes / “normalized” rules** | [What “normalized” means](#what-normalized-means) |
+| **Repo layout** | [Architecture](#architecture) |
+
+## What this is (and is not)
+
+**This is**
+
+- A **decision engine** (“thinking machine”): normalized inputs → **algorithmic** output (`StandAside` or `ArmLongStop`, reasons, diagnostics, optional position plan hints).
+- Built around a **long-only BTC ~15m continuation** strategy (see theory section); other **strategy IDs** can be selected where supported.
+- **Embeddable**: use as a Rust **crate**, optional **`server`** HTTP API (Axum), and a small **`paper_bot`** demo that pulls public Binance klines (no API keys) and prints toy paper results.
+
+**This is not**
+
+- A trading **bot**, exchange **connector**, wallet, or live **execution** layer (nothing in `DecisionMachine` sends orders).
+- A full **backtest** or walk-forward runner (you bring history; the crate evaluates one snapshot at a time).
+- A place for raw exchange blobs: inputs are expected **normalized** (see [What “normalized” means](#what-normalized-means)); use adapters / `binance-fetch` outside the core boundary.
+
+Optional read-only market data: **`binance-fetch`** from [`binance_spot_candles`](https://crates.io/crates/binance_spot_candles) on crates.io (public Spot REST only).
 
 ## Core boundary
 
-The public entrypoint is [src/machine.rs](src/machine.rs).
+The public entrypoint is [`src/machine.rs`](src/machine.rs) (`DecisionMachine`).
 
-The canonical JSON in/out contract is documented under [Machine schema](#machine-schema) below.
+The canonical JSON contract is under [Machine schema](#machine-schema).
 
-`DecisionMachine` accepts:
+**`DecisionMachine` accepts**
 
-- closed `15m` candles
-- optional macro events
-- optional symbol filters
-- optional runtime state such as realized `R` for the day
-- optional RustyFish daily report
+- closed **`15m`** candles (oldest → newest)
+- optional macro events, symbol filters, runtime state (e.g. realized **R** today)
+- optional RustyFish daily numeric overlay
 
 ## Paper bot (demo)
+
+**Use when:** you want to run the engine on **public Binance klines** from your terminal (no HTTP, no API keys) and see a **toy** paper P&L printout.
 
 ### Rust `paper_bot` (in-process engine)
 
@@ -44,10 +76,10 @@ cargo run --bin paper_bot -- --watch-secs 900
 
 ## HTTP server (optional)
 
-The `server` binary exposes the same JSON contract over HTTP (Axum). It is a thin wrapper around `DecisionMachine`; it does not execute trades.
+The **`server`** binary is a thin **Axum** wrapper around `DecisionMachine`: same JSON as the library, **no trade execution**.
 
 - **Run:** `cargo run` (default binary) or `cargo run --bin server`
-- **Port:** `PORT` environment variable, default `8080`
+- **Listen:** `HOST` (IP, default `0.0.0.0`) and **`PORT`** (default `8080`)
 - **Logs:** set `RUST_LOG` (e.g. `RUST_LOG=tower_http=trace,binance_BTC=info`)
 - **Shorter history (optional):** `VOL_BASELINE_LOOKBACK_BARS` (default `960`). Set to **`96`** so the latest bar only needs **96** closed `15m` candles in each request (looser vol-baseline; fine for dev / smaller payloads). Example: `VOL_BASELINE_LOOKBACK_BARS=96 cargo run`.
 - **Horizontal scaling:** Each instance is **stateless** (all bar data and overrides are in the `POST` body; the in-memory `DecisionMachine` is read-only after startup). Run **N** identical replicas behind a load balancer; total throughput scales with **N × per-box hardware** (no sticky sessions). Keep optional env vars (`EVALUATE_API_KEY`, `VOL_BASELINE_LOOKBACK_BARS`, …) aligned across replicas when you use them. **`EVALUATE_MAX_INFLIGHT`** is optional: leave it unset for **no** per-process concurrency cap on evaluate (hardware / OS bound only); set a positive integer to cap concurrent evaluates **per instance** for overload protection.
@@ -60,7 +92,7 @@ The `server` binary exposes the same JSON contract over HTTP (Axum). It is a thi
 | `GET` | `/v1/capabilities` | Same payload as `DecisionMachine::capabilities()` |
 | `POST` | `/v1/evaluate` | Body: `MachineRequest` JSON → `MachineResponse` JSON |
 
-Invalid JSON returns **422**. Evaluation errors (e.g. insufficient history) return **400** with a plain-text body.
+**Responses:** malformed JSON → **422**. Evaluation errors (e.g. insufficient history) → **400** with JSON `{"error":"invalid_request"}`. If **`EVALUATE_API_KEY`** is set, missing or wrong credentials → **401** with `{"error":"unauthorized"}` (send key as `X-Api-Key: …` or `Authorization: Bearer …`).
 
 ## Binance data CLI (`binance-fetch`)
 
@@ -677,34 +709,19 @@ let response = machine.evaluate(MachineRequest {
 
 ## Architecture
 
-Core strategy:
+Where the important pieces live (high level):
 
-- `src/strategy/gates/`  
-  One file per veto/gate.
+| Area | Path | Role |
+|------|------|------|
+| **Public API** | [`src/machine.rs`](src/machine.rs) | `DecisionMachine::evaluate`, capabilities, JSON-shaped types. |
+| **Feature prep** | [`src/market_data/prepare.rs`](src/market_data/prepare.rs) | Builds `PreparedDataset` / `PreparedCandle` + full `IndicatorSnapshot` from candles + config. |
+| **Strategies** | [`src/strategies/`](src/strategies/) | Strategy engines (`default`, `rsi_pullback`, …), gates under `strategies/default/gates/`. |
+| **Shared decision math** | [`src/strategy/`](src/strategy/) | `SignalDecision`, formulas (`position_sizing`, …), shared state — not the same folder as `strategies/`. |
+| **Indicators** | [`src/indicators/`](src/indicators/) | TA series used from `prepare` (one module per study). |
+| **Context** | [`src/context/`](src/context/) | Overlay types, policy clamps, RustyFish → numeric overlay mapping. |
+| **HTTP / demo** | [`src/bin/server.rs`](src/bin/server.rs), [`src/bin/paper_bot.rs`](src/bin/paper_bot.rs) | Optional Axum server; Binance kline demo loop. |
 
-- `src/strategy/formulas/`  
-  One file per tunable formula family.
-
-- `src/strategy/prepare.rs`  
-  Feature preparation from raw candles.
-
-- `src/strategy/engine/evaluation.rs`  
-  Decision evaluation only.
-
-Context:
-
-- `src/context/overlay.rs`  
-  Bounded overlay type.
-
-- `src/context/policy.rs`  
-  Clamp policy for external context.
-
-- `src/context/rustyfish/`  
-  RustyFish report contract and mapping.
-
-Input adapters:
-
-- [`binance_spot_candles`](https://crates.io/crates/binance_spot_candles) (dependency) — kline CSV and `exchangeInfo` parsing live in that crate; see [docs.rs](https://docs.rs/binance_spot_candles).
+**External data:** [`binance_spot_candles`](https://crates.io/crates/binance_spot_candles) (Cargo dependency) supplies Binance REST helpers and CLI `binance-fetch`; see [docs.rs](https://docs.rs/binance_spot_candles). This crate re-exports adapters under `binance_BTC::adapters`.
 
 ## What was removed
 
