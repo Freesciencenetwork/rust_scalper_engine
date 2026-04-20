@@ -12,7 +12,7 @@ use crate::config::StrategyConfig;
 use crate::domain::{Candle, MacroEvent, SymbolFilters, SystemMode};
 use crate::historical_data::{BundledBtcUsd1m, load_btcusd_1m};
 use crate::market_data::{PreparedCandle, PreparedDataset};
-use crate::strategies::strategy_engine_for;
+use crate::strategies::{strategy_engine_for, supported_strategy_ids};
 use crate::strategy::decision::SignalDecision;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -251,14 +251,24 @@ pub struct StrategyReplayResponse {
     pub steps: Vec<StrategyReplayStep>,
 }
 
+/// Last-bar [`SignalDecision`] for the configured strategy (same **`strategy_id`** strings as
+/// **`GET /v1/catalog`** → **`strategies[].id`**).
+#[derive(Clone, Debug, Serialize)]
+pub struct StrategyEvaluateResponse {
+    pub strategy_id: String,
+    pub decision: SignalDecision,
+}
+
 #[derive(Debug)]
 pub enum EvaluateStrategyError {
+    Unknown { id: String },
     Dataset(anyhow::Error),
 }
 
 impl std::fmt::Display for EvaluateStrategyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Unknown { id } => write!(f, "unknown_strategy: {id}"),
             Self::Dataset(e) => write!(f, "{e}"),
         }
     }
@@ -267,6 +277,7 @@ impl std::fmt::Display for EvaluateStrategyError {
 impl std::error::Error for EvaluateStrategyError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Unknown { .. } => None,
             Self::Dataset(e) => Some(e.as_ref()),
         }
     }
@@ -387,6 +398,45 @@ impl DecisionMachine {
         Ok(IndicatorEvaluateResponse {
             path: indicator_path.to_string(),
             report,
+        })
+    }
+
+    /// Run the merged **`strategy_id`** on the **last** closed bar (same failed-acceptance replay
+    /// prelude as [`Self::evaluate_strategy_replay`] at that index).
+    pub fn evaluate_strategy(
+        &self,
+        request: MachineRequest,
+    ) -> Result<StrategyEvaluateResponse, EvaluateStrategyError> {
+        let halt = request.runtime_state.halt_new_entries_flag != 0;
+        let mode = if halt {
+            SystemMode::Halted
+        } else {
+            SystemMode::Active
+        };
+        let ctx = self
+            .build_evaluation_context(request)
+            .map_err(EvaluateStrategyError::Dataset)?;
+        let last = ctx.dataset.frames.len().checked_sub(1).ok_or_else(|| {
+            EvaluateStrategyError::Dataset(anyhow::anyhow!(
+                "at least one closed candle is required"
+            ))
+        })?;
+        if !supported_strategy_ids()
+            .iter()
+            .any(|&s| s == ctx.config.strategy_id.as_str())
+        {
+            return Err(EvaluateStrategyError::Unknown {
+                id: ctx.config.strategy_id.clone(),
+            });
+        }
+        let mut engine =
+            strategy_engine_for(&ctx.config).map_err(EvaluateStrategyError::Dataset)?;
+        engine.set_system_mode(mode);
+        engine.replay_failed_acceptance_window(0, last, &ctx.dataset);
+        let decision = engine.decide(last, &ctx.dataset);
+        Ok(StrategyEvaluateResponse {
+            strategy_id: ctx.config.strategy_id.clone(),
+            decision,
         })
     }
 
@@ -1146,6 +1196,70 @@ mod tests {
         assert_eq!(out.steps.len(), 3);
         assert_eq!(out.steps[0].bar_index, 20);
         assert_eq!(out.steps[2].bar_index, 22);
+    }
+
+    #[test]
+    fn evaluate_strategy_last_bar_matches_replay_terminal() {
+        use chrono::{Duration, TimeZone, Utc};
+
+        use super::{DecisionMachine, MachineRequest, RuntimeState, StrategyReplayRequest};
+        use crate::config::StrategyConfig;
+        use crate::domain::Candle;
+
+        let config = StrategyConfig {
+            vwma_lookback: 4,
+            vol_baseline_lookback_bars: 4,
+            vp_enabled: false,
+            ..Default::default()
+        };
+        let machine = DecisionMachine::new(config);
+        let base = Utc
+            .with_ymd_and_hms(2026, 4, 15, 0, 15, 0)
+            .single()
+            .unwrap();
+        let candles: Vec<Candle> = (0..24)
+            .map(|i| Candle {
+                close_time: base + Duration::minutes(15 * i as i64),
+                open: 100.0 + i as f64,
+                high: 101.0 + i as f64,
+                low: 99.0 + i as f64,
+                close: 100.5 + i as f64 * 0.2,
+                volume: 10.0,
+                buy_volume: Some(6.0),
+                sell_volume: Some(4.0),
+                delta: None,
+            })
+            .collect();
+        let machine_req = MachineRequest {
+            candles: candles.clone(),
+            bar_interval: None,
+            macro_events: Vec::new(),
+            runtime_state: RuntimeState::default(),
+            account_equity: None,
+            symbol_filters: None,
+            config_overrides: None,
+            synthetic_series: None,
+            bundled_btcusd_1m: None,
+        };
+        let last_eval = machine
+            .evaluate_strategy(machine_req.clone())
+            .expect("strategy evaluate");
+        let replay = machine
+            .evaluate_strategy_replay(StrategyReplayRequest {
+                machine: machine_req,
+                from_index: None,
+                to_index: None,
+                step: Some(1),
+                replay_from: None,
+                replay_to: None,
+            })
+            .expect("strategy replay");
+        let terminal = replay.steps.last().expect("steps");
+        assert_eq!(last_eval.strategy_id, replay.strategy_id);
+        assert_eq!(
+            serde_json::to_string(&last_eval.decision).expect("serde"),
+            serde_json::to_string(&terminal.decision).expect("serde"),
+        );
     }
 
     #[test]

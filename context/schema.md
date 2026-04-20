@@ -1,6 +1,6 @@
 # schema
 
-- **HTTP POST bodies** (indicator last-bar, indicator replay, strategy replay): serde-flattens into one JSON root — see **`MachineRequest`** + replay fields in [`src/machine.rs`](../src/machine.rs) (`IndicatorReplayRequest`, `StrategyReplayRequest` flatten `machine: MachineRequest`).
+- **HTTP POST bodies** (indicator last-bar, **strategy last-bar**, indicator replay, strategy replay): serde-flattens into one JSON root — see **`MachineRequest`** + replay fields in [`src/machine.rs`](../src/machine.rs) (`IndicatorReplayRequest`, `StrategyReplayRequest` flatten `machine: MachineRequest`). **`POST /v1/strategies/{id}`** = **`MachineRequest`** only → **`StrategyEvaluateResponse`** (`strategy_id`, `decision`).
 - **Bar source (exactly one):** non-empty **`candles`** (alias **`candles_15m`**) **or** **`bundled_btcusd_1m`** (`from` / `to` / `all` + CSV from **`BTCUSD_1M_CSV`** or default path) **or** **`synthetic_series`** (demo OHLCV). Optional **`bar_interval`**, **`runtime_state`**, **`config_overrides`**, etc.
 - **Replay-only (same JSON root):** **`from_index`**, **`to_index`**, **`step`** **or** **`replay_from`** / **`replay_to`** (`YYYY-MM-DD` UTC, inclusive by bar **`close_time`**; both set → overrides indices); plus **`indicators`** for **`POST /v1/indicators/replay`** only.
 - **Candle (JSON):** `close_time` (ms since epoch), `open`, `high`, `low`, `close`, `volume`; optional `buy_volume`, `sell_volume`, `delta`. Oldest → newest.

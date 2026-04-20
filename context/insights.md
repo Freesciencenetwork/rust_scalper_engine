@@ -1,6 +1,6 @@
 # insights
 
-- **2026-04-19:** README first replay sample: **`bundled` `from`/`to` only** = full walk over that slice; **`replay_*`** only when slice > desired walk.
+- **2026-04-19:** README teaches **candles-first** then **`POST /v1/indicators/{path}`** (evaluate); **`/replay`** + **`bundled`** = alternate one-call pattern (replay body may use **`candles`** instead).
 - **2026-04-19:** **`bundled_btcusd_1m.all: true`**: CSV read stops at **500k** rows (**warn**), not error — matches README “max load backtest” on huge files.
 - **2026-04-19:** README replay section is **date-first**; **`step`** / index window not shown in examples (still in **`machine.rs`** / server behavior).
 - **2026-04-19:** README API = **one line per route** (bullets), not a table.

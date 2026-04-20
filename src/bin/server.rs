@@ -24,6 +24,7 @@
 //! | POST | `/v1/indicators/{name}` | Compute last-bar value for one indicator. |
 //! | POST | `/v1/indicators/{name}/replay` | Replay one indicator (`from_index`/`to_index` or `replay_from`/`replay_to` UTC days). |
 //! | POST | `/v1/indicators/replay` | Replay multiple indicators (list in body) over a bar window. |
+//! | POST | `/v1/strategies/{strategy_id}` | Last-bar strategy decision (`MachineRequest` body; path overrides `strategy_id`). |
 //! | POST | `/v1/strategies/replay` | Linear strategy replay (same window fields as indicator replay). |
 
 #![allow(non_snake_case)] // Same package name as library crate (`binance_BTC`).
@@ -45,14 +46,14 @@ use binance_BTC::{
     CatalogIndicatorEntry, CatalogResponse, CatalogStrategyEntry, DecisionMachine,
     EvaluateIndicatorError, EvaluateStrategyError, IndicatorEvaluateResponse,
     IndicatorReplayRequest, IndicatorReplayResponse, MachineCapabilities, MachineRequest,
-    StrategyConfig, StrategyReplayRequest, StrategyReplayResponse,
+    StrategyConfig, StrategyEvaluateResponse, StrategyReplayRequest, StrategyReplayResponse,
 };
 use tower::limit::ConcurrencyLimitLayer;
 use tower::util::option_layer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
-/// Max JSON body size for JSON POST routes (`/v1/indicators/*`, `/v1/strategies/replay`).
+/// Max JSON body size for JSON POST routes (`/v1/indicators/*`, `/v1/strategies/*`).
 const MAX_JSON_BODY: usize = 10 * 1024 * 1024;
 
 #[tokio::main]
@@ -80,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
     if let Some(n) = evaluate_max_inflight {
         tracing::info!(
             evaluate_max_inflight = n,
-            "EVALUATE_MAX_INFLIGHT: concurrent POST /v1/indicators/* and /v1/strategies/replay capped per process"
+            "EVALUATE_MAX_INFLIGHT: concurrent POST /v1/indicators/* and /v1/strategies/* capped per process"
         );
     } else {
         tracing::info!(
@@ -98,6 +99,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/indicators/replay", post(evaluate_indicators_replay))
         .route("/strategies/replay", post(evaluate_strategy_replay))
+        .route("/strategies/{strategy_id}", post(evaluate_strategy_last_bar))
         .layer(option_layer(evaluate_concurrency_limit));
 
     let v1 = Router::new()
@@ -157,13 +159,24 @@ async fn evaluate_strategy_replay(
     State(machine): State<Arc<DecisionMachine>>,
     Json(request): Json<StrategyReplayRequest>,
 ) -> Result<Json<StrategyReplayResponse>, ApiError> {
+    machine.evaluate_strategy_replay(request).map(Json).map_err(|e| match e {
+        EvaluateStrategyError::Unknown { id } => ApiError(anyhow::anyhow!("unknown_strategy: {id}")),
+        EvaluateStrategyError::Dataset(err) => ApiError(err),
+    })
+}
+
+async fn evaluate_strategy_last_bar(
+    State(machine): State<Arc<DecisionMachine>>,
+    Path(strategy_id): Path<String>,
+    Json(mut request): Json<MachineRequest>,
+) -> Result<Json<StrategyEvaluateResponse>, StrategyApiError> {
+    let mut co = request.config_overrides.take().unwrap_or_default();
+    co.strategy_id = Some(strategy_id.trim().to_string());
+    request.config_overrides = Some(co);
     machine
-        .evaluate_strategy_replay(request)
+        .evaluate_strategy(request)
         .map(Json)
-        .map_err(|e| {
-            let EvaluateStrategyError::Dataset(err) = e;
-            ApiError(err)
-        })
+        .map_err(StrategyApiError)
 }
 
 async fn evaluate_indicator(
@@ -260,6 +273,24 @@ impl IntoResponse for ApiError {
             Json(serde_json::json!({ "error": "invalid_request" })),
         )
             .into_response()
+    }
+}
+
+struct StrategyApiError(EvaluateStrategyError);
+
+impl IntoResponse for StrategyApiError {
+    fn into_response(self) -> axum::response::Response {
+        match self.0 {
+            EvaluateStrategyError::Unknown { id } => (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "error": "unknown_strategy",
+                    "id": id,
+                })),
+            )
+                .into_response(),
+            EvaluateStrategyError::Dataset(e) => ApiError(e).into_response(),
+        }
     }
 }
 

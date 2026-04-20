@@ -26,7 +26,8 @@ pub use machine::{
     ConfigOverrides, DecisionMachine, EvaluateIndicatorError, EvaluateStrategyError,
     IndicatorEvaluateResponse, IndicatorReplayRequest, IndicatorReplayResponse,
     IndicatorReplayStep, IndicatorValueReport, MachineCapabilities, MachineRequest, RuntimeState,
-    StrategyReplayRequest, StrategyReplayResponse, StrategyReplayStep, SyntheticSeries,
+    StrategyEvaluateResponse, StrategyReplayRequest, StrategyReplayResponse, StrategyReplayStep,
+    SyntheticSeries,
 };
 pub use market_data::{
     CandlestickPatternSnapshot, DirectionalSnapshot, IchimokuSnapshot, IndicatorSnapshot,
