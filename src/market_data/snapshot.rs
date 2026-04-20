@@ -150,6 +150,47 @@ pub struct CandlestickPatternSnapshot {
     pub doji: bool,
 }
 
+/// Order flow and market microstructure indicators.
+///
+/// All fields that require `buy_volume` / `sell_volume` are `Option` and return
+/// `None` on plain OHLCV data.  Boolean fields default to `false`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct OrderFlowSnapshot {
+    /// Rolling OFI (net delta / total volume) over 20 bars.  Range `[-1, 1]`.
+    /// `+1` = sustained buy aggression; `-1` = sustained sell aggression.
+    pub ofi_20: Option<f64>,
+
+    /// Rolling average buy-aggression ratio (buy_vol / total_vol) over 20 bars.
+    /// Range `[0, 1]`. `> 0.5` = buyers more aggressive.
+    pub aggression_ratio_20: Option<f64>,
+
+    /// Price pierced above the prior 20-bar high with confirming buy delta.
+    pub liquidity_sweep_up: bool,
+
+    /// Price pierced below the prior 20-bar low with confirming sell delta.
+    pub liquidity_sweep_down: bool,
+
+    /// Bar has a wide price range (≥ 1.5× ATR) with below-average volume —
+    /// a liquidity void / thin zone that may refill quickly.
+    pub thin_zone: bool,
+
+    /// `(close − vwap) / vwap × 100`.  `None` when VWAP is not computed.
+    pub vwap_deviation_pct: Option<f64>,
+
+    /// Rolling average price / delta direction alignment over 20 bars.
+    /// Range `[-1, 1]`: `+1` = confirmed trend, `-1` = divergence.
+    pub vol_trend_confirm_20: Option<f64>,
+
+    /// Bar closes inside the Asia session window (00:00–08:00 UTC).
+    pub in_asia_session: bool,
+
+    /// Bar closes inside the EU session window (07:00–14:00 UTC).
+    pub in_eu_session: bool,
+
+    /// Bar closes inside the US session window (13:00–21:00 UTC).
+    pub in_us_session: bool,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct IndicatorSnapshot {
     pub momentum: MomentumSnapshot,
@@ -159,4 +200,5 @@ pub struct IndicatorSnapshot {
     pub directional: DirectionalSnapshot,
     pub volume: VolumeSnapshot,
     pub patterns: CandlestickPatternSnapshot,
+    pub order_flow: OrderFlowSnapshot,
 }

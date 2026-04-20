@@ -3,26 +3,27 @@ use anyhow::{Result, bail};
 use crate::config::StrategyConfig;
 use crate::domain::{Candle, MacroEvent};
 use crate::indicators::{
-    ad_line_series, adx_series, aggregate_to_higher_tf, alma_series, aroon_series, atr_series,
-    awesome_oscillator_series, bollinger_bandwidth_series, bollinger_pct_b_series,
-    bollinger_series, candlestick_pattern_series, cci_series, chaikin_oscillator_series,
-    chandelier_exit_series, cmf_series, cmo_series, dema_series, donchian_series, elder_ray_series,
-    ema_series, force_index_series, hist_vol_log_returns_series, hull_ma_series, ichimoku_series,
-    kama_series, keltner_series, kst_series, kvo_series, linear_regression_slope_series,
+    ad_line_series, adx_series, aggregate_to_higher_tf, aggression_ratio_series, alma_series,
+    aroon_series, atr_series, awesome_oscillator_series, bollinger_bandwidth_series,
+    bollinger_pct_b_series, bollinger_series, candlestick_pattern_series, cci_series,
+    chaikin_oscillator_series, chandelier_exit_series, cmf_series, cmo_series, dema_series,
+    donchian_series, elder_ray_series, ema_series, force_index_series,
+    hist_vol_log_returns_series, hull_ma_series, ichimoku_series, kama_series, keltner_series,
+    kst_series, kvo_series, linear_regression_slope_series, liquidity_sweep_series,
     macd_series, mama_fama_series, mass_index_series, mcginley_series, mfi_series, nvi_pvi_series,
-    obv_series, parabolic_sar_series, pivot_classic_series, pivot_fib_series, ppo_series,
-    pvo_series, roc_series, rolling_median, rsi_series, sma_series, stochastic_rsi_series,
-    stochastic_series, supertrend_series, tema_series, trix_series, tsi_series, ttm_squeeze_series,
-    ultimate_oscillator_series, vidya_series, volume_ema_series, volume_profile_zones,
-    volume_sma_series, vortex_series, vwap_bands_series, vwma_series, williams_r_series,
-    wma_series, zscore_series,
+    obv_series, ofi_series, parabolic_sar_series, pivot_classic_series, pivot_fib_series,
+    ppo_series, pvo_series, roc_series, rolling_median, rsi_series, session_series, sma_series,
+    stochastic_rsi_series, stochastic_series, supertrend_series, tema_series, thin_zone_series,
+    trix_series, tsi_series, ttm_squeeze_series, ultimate_oscillator_series, vidya_series,
+    vol_trend_confirm_series, volume_ema_series, volume_profile_zones, volume_sma_series,
+    vortex_series, vwap_bands_series, vwma_series, williams_r_series, wma_series, zscore_series,
 };
 
 use super::data::{PreparedCandle, PreparedDataset};
 use super::snapshot::{
     CandlestickPatternSnapshot, DirectionalSnapshot, IchimokuSnapshot, IndicatorSnapshot,
-    MomentumSnapshot, PivotClassicSnapshot, PivotFibSnapshot, TrendSnapshot, VolatilitySnapshot,
-    VolumeSnapshot,
+    MomentumSnapshot, OrderFlowSnapshot, PivotClassicSnapshot, PivotFibSnapshot, TrendSnapshot,
+    VolatilitySnapshot, VolumeSnapshot,
 };
 
 impl PreparedDataset {
@@ -153,6 +154,14 @@ impl PreparedDataset {
         let zscore_20 = zscore_series(&closes, 20);
         let hist_vol_20 = hist_vol_log_returns_series(&closes, 20);
         let patterns = candlestick_pattern_series(&candles);
+
+        // ── Order flow series ─────────────────────────────────────────────
+        let ofi_20 = ofi_series(&candles, 20);
+        let aggression_ratio_20 = aggression_ratio_series(&candles, 20);
+        let sweeps = liquidity_sweep_series(&candles, 20);
+        let thin_zones = thin_zone_series(&candles, &atr_series_data, 20, 1.5, 0.7);
+        let vol_tc_20 = vol_trend_confirm_series(&candles, 20);
+        let sessions = session_series(&candles);
 
         let mut hour_pointer = 0usize;
         let mut frames = Vec::with_capacity(candles.len());
@@ -331,6 +340,24 @@ impl PreparedDataset {
                 doji: pat.doji,
             };
 
+            let sess = &sessions[index];
+            let sweep = &sweeps[index];
+            let vwap_deviation_pct = vwap_bars[index]
+                .as_ref()
+                .map(|v| (candles[index].close - v.vwap) / v.vwap * 100.0);
+            let order_flow = OrderFlowSnapshot {
+                ofi_20: ofi_20[index],
+                aggression_ratio_20: aggression_ratio_20[index],
+                liquidity_sweep_up: sweep.sweep_up,
+                liquidity_sweep_down: sweep.sweep_down,
+                thin_zone: thin_zones[index],
+                vwap_deviation_pct,
+                vol_trend_confirm_20: vol_tc_20[index],
+                in_asia_session: sess.in_asia_session,
+                in_eu_session: sess.in_eu_session,
+                in_us_session: sess.in_us_session,
+            };
+
             frames.push(PreparedCandle {
                 candle: candles[index].clone(),
                 ema_fast: Some(ema_fast[index]),
@@ -359,6 +386,7 @@ impl PreparedDataset {
                     directional,
                     volume,
                     patterns: patterns_snap,
+                    order_flow,
                 },
             });
         }

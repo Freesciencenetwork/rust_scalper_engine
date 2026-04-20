@@ -143,6 +143,19 @@ fn assert_volume_finite(vol: &binance_BTC::VolumeSnapshot) {
     assert_finite_opt("pvi", vol.pvi);
 }
 
+fn assert_order_flow_finite(of: &binance_BTC::OrderFlowSnapshot) {
+    assert_finite_opt("ofi_20", of.ofi_20);
+    assert_finite_opt("aggression_ratio_20", of.aggression_ratio_20);
+    assert_finite_opt("vwap_deviation_pct", of.vwap_deviation_pct);
+    assert_finite_opt("vol_trend_confirm_20", of.vol_trend_confirm_20);
+    if let Some(v) = of.ofi_20 {
+        assert!(v >= -1.0 && v <= 1.0, "ofi_20 out of [-1,1]: {v}");
+    }
+    if let Some(v) = of.aggression_ratio_20 {
+        assert!(v >= 0.0 && v <= 1.0, "aggression_ratio_20 out of [0,1]: {v}");
+    }
+}
+
 fn assert_indicator_snapshot_finite(s: &binance_BTC::IndicatorSnapshot) {
     assert_momentum_finite(&s.momentum);
     assert_trend_finite(&s.trend);
@@ -150,6 +163,7 @@ fn assert_indicator_snapshot_finite(s: &binance_BTC::IndicatorSnapshot) {
     assert_volatility_finite(&s.volatility);
     assert_directional_finite(&s.directional);
     assert_volume_finite(&s.volume);
+    assert_order_flow_finite(&s.order_flow);
 }
 
 fn assert_prepared_fields_finite(frame: &binance_BTC::PreparedCandle) {

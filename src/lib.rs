@@ -31,8 +31,8 @@ pub use machine::{
 };
 pub use market_data::{
     CandlestickPatternSnapshot, DirectionalSnapshot, IchimokuSnapshot, IndicatorSnapshot,
-    MomentumSnapshot, PivotClassicSnapshot, PivotFibSnapshot, PreparedCandle, PreparedDataset,
-    TrendSnapshot, VolatilitySnapshot, VolumeSnapshot,
+    MomentumSnapshot, OrderFlowSnapshot, PivotClassicSnapshot, PivotFibSnapshot, PreparedCandle,
+    PreparedDataset, TrendSnapshot, VolatilitySnapshot, VolumeSnapshot,
 };
 pub use strategies::default::StrategyEngine;
 pub use strategies::supported_strategy_ids;
