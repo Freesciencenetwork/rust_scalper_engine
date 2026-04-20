@@ -1,5 +1,8 @@
 # insights
 
+- **2026-04-19:** README first replay sample: **`bundled` `from`/`to` only** = full walk over that slice; **`replay_*`** only when slice > desired walk.
+- **2026-04-19:** **`bundled_btcusd_1m.all: true`**: CSV read stops at **500k** rows (**warn**), not error — matches README “max load backtest” on huge files.
+- **2026-04-19:** README replay section is **date-first**; **`step`** / index window not shown in examples (still in **`machine.rs`** / server behavior).
 - **2026-04-19:** README API = **one line per route** (bullets), not a table.
 - **2026-04-19:** **`replay_from`** / **`replay_to`** (`YYYY-MM-DD` UTC) on replay bodies map to bar indices by **`close_time`**; override **`from_index`**/**`to_index`** when both set.
 - **2026-04-19:** Full Binance download = **`cargo run --release --bin fetch_max_btcusdt_1m`** (`binance_spot_candles::fetch_klines` loop); **`binance-fetch`** = single ≤1000 page. README **`curl`** uses **`src/historical_data/request.json`**; `.gitignore` **`request.json`** / **`request.trimmed.json`**.

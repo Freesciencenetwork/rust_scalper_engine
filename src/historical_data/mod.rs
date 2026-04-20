@@ -24,7 +24,7 @@ pub struct BundledBtcUsd1m {
     /// Inclusive UTC calendar day **`YYYY-MM-DD`**. Omit for “through end of file”.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub to: Option<String>,
-    /// Read the whole CSV (still capped at [`MAX_BUNDLED_1M_BARS`]); do not set **`from`**/**`to`**.
+    /// Read the CSV oldest-first, stopping at [`MAX_BUNDLED_1M_BARS`] rows (longer files are truncated); do not set **`from`**/**`to`**.
     #[serde(default)]
     pub all: bool,
 }
@@ -161,6 +161,14 @@ pub fn load_btcusd_1m_from_path(path: &Path, b: &BundledBtcUsd1m) -> anyhow::Res
             anyhow::bail!(
                 "bundled BTC/USD 1m slice exceeds {MAX_BUNDLED_1M_BARS} rows; narrow `from`/`to` or increase cap in code"
             );
+        }
+        if b.all && out.len() == MAX_BUNDLED_1M_BARS {
+            tracing::warn!(
+                max_rows = MAX_BUNDLED_1M_BARS,
+                csv_path = %path.display(),
+                "`bundled_btcusd_1m.all`: stopping read at row cap (file may have more rows)"
+            );
+            break;
         }
     }
 
