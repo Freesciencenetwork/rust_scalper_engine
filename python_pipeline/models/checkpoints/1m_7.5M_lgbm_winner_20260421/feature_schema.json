@@ -1,0 +1,31 @@
+{
+  "feature_columns": [
+    "ret_1",
+    "ret_3",
+    "ret_5",
+    "roll_mean",
+    "roll_std",
+    "close_to_mean",
+    "rsi",
+    "macd_line",
+    "macd_signal",
+    "macd_hist",
+    "vol_change",
+    "vol_zscore",
+    "ema_fast",
+    "ema_slow",
+    "ema_spread"
+  ],
+  "num_features": 15,
+  "num_classes": 3,
+  "class_labels": {
+    "0": "DOWN",
+    "1": "FLAT",
+    "2": "UP"
+  },
+  "horizon": 5,
+  "threshold": 0.001,
+  "best_model": "lightgbm",
+  "xgb_model_path": "/Users/francesco/Desktop/rust_scalper_engine/python_pipeline/models/btc_xgb.json",
+  "lgbm_model_path": "/Users/francesco/Desktop/rust_scalper_engine/python_pipeline/models/btc_lgbm.txt"
+}
