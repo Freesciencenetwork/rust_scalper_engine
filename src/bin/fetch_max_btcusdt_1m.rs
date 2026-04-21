@@ -10,7 +10,7 @@
 //!
 //! Optional env (defaults in parentheses): **`BINANCE_BASE_URL`** (`https://api.binance.com`),
 //! **`BINANCE_SYMBOL`** (`BTCUSDT`), **`BINANCE_INTERVAL`** (`1m`),
-//! **`BINANCE_START_OPEN_MS`** (`1502942400000` = first 1m bar Binance serves for this pair),
+//! **`BINANCE_START_OPEN_MS`** (`1_502_942_400_000` = first 1m bar Binance serves for this pair),
 //! **`BINANCE_SLEEP_SEC`** (`0.02`), **`FETCH_OUT`** (`src/historical_data/request.json` under the manifest dir).
 
 use std::env;
@@ -25,7 +25,7 @@ use tokio::time::{Duration as TokioDuration, sleep};
 
 const DEFAULT_BASE: &str = "https://api.binance.com";
 /// Open time (ms) of the earliest **BTCUSDT** **1m** kline Binance returns for `startTime=0`.
-const DEFAULT_START_OPEN_MS: i64 = 1502942400000;
+const DEFAULT_START_OPEN_MS: i64 = 1_502_942_400_000;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -44,14 +44,14 @@ async fn main() -> Result<()> {
     let out_rel =
         env::var("FETCH_OUT").unwrap_or_else(|_| "src/historical_data/request.json".to_string());
     let out_path = manifest.join(&out_rel);
-    let partial_name = out_path
-        .file_name()
-        .map(|s| {
+    let partial_name = out_path.file_name().map_or_else(
+        || "request.json.partial".into(),
+        |s| {
             let mut o = s.to_os_string();
             o.push(".partial");
             o
-        })
-        .unwrap_or_else(|| "request.json.partial".into());
+        },
+    );
     let partial_path = out_path
         .parent()
         .unwrap_or(manifest.as_path())
@@ -107,7 +107,7 @@ async fn main() -> Result<()> {
         }
 
         batches += 1;
-        if batches % 50 == 0 {
+        if batches.is_multiple_of(50) {
             eprintln!(
                 "{batches} batches, {candles} candles, elapsed {:.0}s",
                 t0.elapsed().as_secs_f64()

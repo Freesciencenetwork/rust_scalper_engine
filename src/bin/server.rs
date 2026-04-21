@@ -99,7 +99,10 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/indicators/replay", post(evaluate_indicators_replay))
         .route("/strategies/replay", post(evaluate_strategy_replay))
-        .route("/strategies/{strategy_id}", post(evaluate_strategy_last_bar))
+        .route(
+            "/strategies/{strategy_id}",
+            post(evaluate_strategy_last_bar),
+        )
         .layer(option_layer(evaluate_concurrency_limit));
 
     let v1 = Router::new()
@@ -159,10 +162,15 @@ async fn evaluate_strategy_replay(
     State(machine): State<Arc<DecisionMachine>>,
     Json(request): Json<StrategyReplayRequest>,
 ) -> Result<Json<StrategyReplayResponse>, ApiError> {
-    machine.evaluate_strategy_replay(request).map(Json).map_err(|e| match e {
-        EvaluateStrategyError::Unknown { id } => ApiError(anyhow::anyhow!("unknown_strategy: {id}")),
-        EvaluateStrategyError::Dataset(err) => ApiError(err),
-    })
+    machine
+        .evaluate_strategy_replay(request)
+        .map(Json)
+        .map_err(|e| match e {
+            EvaluateStrategyError::Unknown { id } => {
+                ApiError(anyhow::anyhow!("unknown_strategy: {id}"))
+            }
+            EvaluateStrategyError::Dataset(err) => ApiError(err),
+        })
 }
 
 async fn evaluate_strategy_last_bar(
@@ -204,15 +212,17 @@ async fn evaluate_indicator_replay(
 
 async fn evaluate_indicators_replay(
     State(machine): State<Arc<DecisionMachine>>,
-    Json(request): Json<IndicatorReplayRequest>,
+    Json(mut request): Json<IndicatorReplayRequest>,
 ) -> Result<Json<IndicatorReplayResponse>, IndicatorApiError> {
     if request.indicators.is_empty() {
         return Err(IndicatorApiError(EvaluateIndicatorError::Dataset(anyhow!(
             "indicators list must be non-empty for POST /v1/indicators/replay"
         ))));
     }
-    let path_strings: Vec<String> = request.indicators.clone();
-    let paths: Vec<&str> = path_strings.iter().map(String::as_str).collect();
+    // Move the strings out of request before passing request by value; the callee
+    // receives paths separately and does not read request.indicators.
+    let path_strs: Vec<String> = std::mem::take(&mut request.indicators);
+    let paths: Vec<&str> = path_strs.iter().map(String::as_str).collect();
     machine
         .evaluate_indicator_replay(&paths, request)
         .map(Json)

@@ -78,11 +78,11 @@ mod tests {
     fn wide_range_low_vol_flags_thin_zone() {
         // 4 normal bars then 1 wide-range, low-vol bar.
         let candles = vec![
-            c(0,  101.0, 99.0, 10.0),
+            c(0, 101.0, 99.0, 10.0),
             c(15, 101.0, 99.0, 10.0),
             c(30, 101.0, 99.0, 10.0),
             c(45, 101.0, 99.0, 10.0),
-            c(60, 105.0, 95.0,  3.0), // range = 10, ATR ≈ 2 → 10 >= 1.5*2; vol 3 < 0.7*avg
+            c(60, 105.0, 95.0, 3.0), // range = 10, ATR ≈ 2 → 10 >= 1.5*2; vol 3 < 0.7*avg
         ];
         let atr: Vec<Option<f64>> = vec![None, None, None, Some(2.0), Some(2.0)];
         let result = thin_zone_series(&candles, &atr, 4, 1.5, 0.7);

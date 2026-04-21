@@ -37,12 +37,10 @@ fn default_csv_path() -> PathBuf {
 }
 
 pub fn resolve_btcusd_1m_csv_path() -> PathBuf {
-    std::env::var("BTCUSD_1M_CSV")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| default_csv_path())
+    std::env::var("BTCUSD_1M_CSV").map_or_else(|_| default_csv_path(), PathBuf::from)
 }
 
-fn utc_day_start(d: NaiveDate) -> DateTime<Utc> {
+const fn utc_day_start(d: NaiveDate) -> DateTime<Utc> {
     DateTime::from_naive_utc_and_offset(d.and_hms_opt(0, 0, 0).expect("midnight"), Utc)
 }
 
@@ -51,10 +49,11 @@ fn parse_day(s: &str) -> anyhow::Result<NaiveDate> {
 }
 
 /// Inclusive `to` calendar day in UTC → exclusive upper bound (start of next UTC day after `to`).
-fn day_after_exclusive(d: NaiveDate) -> DateTime<Utc> {
+const fn day_after_exclusive(d: NaiveDate) -> DateTime<Utc> {
     utc_day_start(d.succ_opt().expect("NaiveDate succ"))
 }
 
+#[allow(clippy::cast_possible_truncation)] // Bundled CSV uses second-resolution unix times in i64 range
 fn row_ts_sec(ts_field: &str) -> anyhow::Result<i64> {
     let v: f64 = ts_field
         .trim()
@@ -63,45 +62,88 @@ fn row_ts_sec(ts_field: &str) -> anyhow::Result<i64> {
     Ok(v as i64)
 }
 
-/// Load filtered rows from the bundled CSV into [`Candle`]s (oldest first).
-pub fn load_btcusd_1m(b: &BundledBtcUsd1m) -> anyhow::Result<Vec<Candle>> {
-    load_btcusd_1m_from_path(&resolve_btcusd_1m_csv_path(), b)
-}
-
-pub fn load_btcusd_1m_from_path(path: &Path, b: &BundledBtcUsd1m) -> anyhow::Result<Vec<Candle>> {
-    if b.all && (b.from.is_some() || b.to.is_some()) {
+fn bundle_time_bounds(bundle: &BundledBtcUsd1m) -> anyhow::Result<(Option<i64>, Option<i64>)> {
+    if bundle.all && (bundle.from.is_some() || bundle.to.is_some()) {
         anyhow::bail!("bundled_btcusd_1m: do not set `from`/`to` together with `all: true`");
     }
-    if !b.all && b.from.is_none() && b.to.is_none() {
+    if !bundle.all && bundle.from.is_none() && bundle.to.is_none() {
         anyhow::bail!(
             "bundled_btcusd_1m: set `from` and/or `to` as YYYY-MM-DD (UTC calendar days), or `all: true`"
         );
     }
 
-    let lower_sec: Option<i64> = if b.all {
+    let lower_sec: Option<i64> = if bundle.all {
         None
     } else {
-        b.from
+        bundle
+            .from
             .as_ref()
             .map(|s| parse_day(s).map(|d| utc_day_start(d).timestamp()))
             .transpose()?
     };
-    let upper_excl_sec: Option<i64> = if b.all {
+    let upper_excl_sec: Option<i64> = if bundle.all {
         None
     } else {
-        b.to.as_ref()
+        bundle
+            .to
+            .as_ref()
             .map(|s| parse_day(s).map(|d| day_after_exclusive(d).timestamp()))
             .transpose()?
     };
 
-    if let (Some(lo), Some(hi)) = (lower_sec, upper_excl_sec) {
-        if hi <= lo {
-            anyhow::bail!("bundled_btcusd_1m: `to` day must be on or after `from` day");
-        }
+    if let (Some(lo), Some(hi)) = (lower_sec, upper_excl_sec)
+        && hi <= lo
+    {
+        anyhow::bail!("bundled_btcusd_1m: `to` day must be on or after `from` day");
     }
 
-    let f = File::open(path).with_context(|| format!("open {}", path.display()))?;
-    let mut lines = BufReader::new(f).lines();
+    Ok((lower_sec, upper_excl_sec))
+}
+
+fn parse_csv_candle_line(line: &str, lineno: usize) -> anyhow::Result<(i64, Candle)> {
+    let mut parts = line.splitn(6, ',');
+    let ts_s = parts.next().context("timestamp column")?;
+    let open = parts.next().context("open")?;
+    let high = parts.next().context("high")?;
+    let low = parts.next().context("low")?;
+    let close = parts.next().context("close")?;
+    let vol = parts.next().context("volume")?;
+
+    let ts = row_ts_sec(ts_s)?;
+    let close_time = Utc
+        .timestamp_opt(ts, 0)
+        .single()
+        .ok_or_else(|| anyhow!("bad unix timestamp {ts}"))?;
+    let candle = Candle {
+        close_time,
+        open: open
+            .trim()
+            .parse()
+            .with_context(|| format!("open line {}", lineno + 2))?,
+        high: high.trim().parse().context("high")?,
+        low: low.trim().parse().context("low")?,
+        close: close.trim().parse().context("close")?,
+        volume: vol.trim().parse().context("volume")?,
+        buy_volume: None,
+        sell_volume: None,
+        delta: None,
+    };
+    Ok((ts, candle))
+}
+
+/// Load filtered rows from the bundled CSV into [`Candle`]s (oldest first).
+pub fn load_btcusd_1m(bundle: &BundledBtcUsd1m) -> anyhow::Result<Vec<Candle>> {
+    load_btcusd_1m_from_path(&resolve_btcusd_1m_csv_path(), bundle)
+}
+
+pub fn load_btcusd_1m_from_path(
+    path: &Path,
+    bundle: &BundledBtcUsd1m,
+) -> anyhow::Result<Vec<Candle>> {
+    let (lower_sec, upper_excl_sec) = bundle_time_bounds(bundle)?;
+
+    let file = File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let mut lines = BufReader::new(file).lines();
     let header = lines
         .next()
         .transpose()
@@ -118,51 +160,28 @@ pub fn load_btcusd_1m_from_path(path: &Path, b: &BundledBtcUsd1m) -> anyhow::Res
         if line.is_empty() {
             continue;
         }
-        let mut parts = line.splitn(6, ',');
-        let ts_s = parts.next().context("timestamp column")?;
-        let o = parts.next().context("open")?;
-        let h = parts.next().context("high")?;
-        let l = parts.next().context("low")?;
-        let c = parts.next().context("close")?;
-        let v = parts.next().context("volume")?;
 
-        let ts = row_ts_sec(ts_s)?;
-        if let Some(lo) = lower_sec {
-            if ts < lo {
-                continue;
-            }
+        let (ts, candle) = parse_csv_candle_line(line, lineno)?;
+
+        if let Some(lo) = lower_sec
+            && ts < lo
+        {
+            continue;
         }
-        if let Some(hi) = upper_excl_sec {
-            if ts >= hi {
-                break;
-            }
+        if let Some(hi) = upper_excl_sec
+            && ts >= hi
+        {
+            break;
         }
 
-        let close_time = Utc
-            .timestamp_opt(ts, 0)
-            .single()
-            .ok_or_else(|| anyhow!("bad unix timestamp {ts}"))?;
-        out.push(Candle {
-            close_time,
-            open: o
-                .trim()
-                .parse()
-                .with_context(|| format!("open line {}", lineno + 2))?,
-            high: h.trim().parse().context("high")?,
-            low: l.trim().parse().context("low")?,
-            close: c.trim().parse().context("close")?,
-            volume: v.trim().parse().context("volume")?,
-            buy_volume: None,
-            sell_volume: None,
-            delta: None,
-        });
+        out.push(candle);
 
         if out.len() > MAX_BUNDLED_1M_BARS {
             anyhow::bail!(
                 "bundled BTC/USD 1m slice exceeds {MAX_BUNDLED_1M_BARS} rows; narrow `from`/`to` or increase cap in code"
             );
         }
-        if b.all && out.len() == MAX_BUNDLED_1M_BARS {
+        if bundle.all && out.len() == MAX_BUNDLED_1M_BARS {
             tracing::warn!(
                 max_rows = MAX_BUNDLED_1M_BARS,
                 csv_path = %path.display(),
@@ -195,24 +214,24 @@ mod tests {
     #[test]
     fn loads_fixture_all() {
         let path = tiny_fixture();
-        let b = BundledBtcUsd1m {
+        let bundle = BundledBtcUsd1m {
             from: None,
             to: None,
             all: true,
         };
-        let v = load_btcusd_1m_from_path(&path, &b).expect("load");
+        let v = load_btcusd_1m_from_path(&path, &bundle).expect("load");
         assert_eq!(v.len(), 4);
     }
 
     #[test]
     fn loads_fixture_day_slice() {
         let path = tiny_fixture();
-        let b = BundledBtcUsd1m {
+        let bundle = BundledBtcUsd1m {
             from: Some("2000-01-01".to_string()),
             to: Some("2030-01-01".to_string()),
             all: false,
         };
-        let v = load_btcusd_1m_from_path(&path, &b).expect("load");
+        let v = load_btcusd_1m_from_path(&path, &bundle).expect("load");
         assert_eq!(v.len(), 4);
     }
 }

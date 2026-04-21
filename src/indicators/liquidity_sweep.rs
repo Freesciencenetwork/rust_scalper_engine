@@ -30,7 +30,10 @@ pub fn liquidity_sweep_series(candles: &[Candle], lookback: usize) -> Vec<Liquid
     }
     for i in lookback..n {
         let prior = &candles[i - lookback..i];
-        let max_high = prior.iter().map(|c| c.high).fold(f64::NEG_INFINITY, f64::max);
+        let max_high = prior
+            .iter()
+            .map(|c| c.high)
+            .fold(f64::NEG_INFINITY, f64::max);
         let min_low = prior.iter().map(|c| c.low).fold(f64::INFINITY, f64::min);
         let cur = &candles[i];
         let delta = cur.inferred_delta();
@@ -40,8 +43,8 @@ pub fn liquidity_sweep_series(candles: &[Candle], lookback: usize) -> Vec<Liquid
         let breaks_low = cur.low < min_low;
 
         // Delta confirmation (if available).  Absent delta → direction not disputed.
-        let delta_confirms_up = delta.map_or(true, |d| d >= 0.0);
-        let delta_confirms_down = delta.map_or(true, |d| d <= 0.0);
+        let delta_confirms_up = delta.is_none_or(|d| d >= 0.0);
+        let delta_confirms_down = delta.is_none_or(|d| d <= 0.0);
 
         out[i] = LiquiditySweepBar {
             sweep_up: breaks_high && delta_confirms_up,

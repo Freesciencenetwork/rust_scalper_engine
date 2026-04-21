@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use crate::config::StrategyConfig;
 use crate::domain::Candle;
-use crate::market_data::PreparedCandle;
+use crate::market_data::{IndicatorSnapshot, PreparedCandle};
 use crate::strategies::supported_strategy_ids;
 
 pub use warmup::{min_bars_required_for_path, path_note};
@@ -94,6 +94,7 @@ pub fn flatten_object_leaves(prefix: &str, value: &Value, out: &mut BTreeMap<Str
 }
 
 /// `key` is included if any filter matches (empty `filters` → all keys).
+#[must_use]
 pub fn key_matches_any_filter(key: &str, filters: &[String]) -> bool {
     if filters.is_empty() {
         return true;
@@ -116,6 +117,7 @@ fn key_matches_filter(key: &str, filter: &str) -> bool {
     key.ends_with(&suffix)
 }
 
+#[must_use]
 pub fn filter_indicator_map(
     mut flat: BTreeMap<String, Value>,
     filters: &[String],
@@ -162,11 +164,12 @@ fn sample_prepared_candle() -> PreparedCandle {
         vp_val: None,
         vp_poc: None,
         vp_vah: None,
-        indicator_snapshot: Default::default(),
+        indicator_snapshot: IndicatorSnapshot::default(),
     }
 }
 
 /// Build the catalog (strategy ids + all flattened paths for a schema [`PreparedCandle`]).
+#[must_use]
 pub fn build_catalog_response() -> CatalogResponse {
     let default_cfg = StrategyConfig::default();
     let strategies = supported_strategy_ids()
@@ -192,7 +195,7 @@ pub fn build_catalog_response() -> CatalogResponse {
         engine_series_semantics: EngineSeriesSemantics {
             uniform_bar_steps: true,
             bar_interval_request_field: "bar_interval",
-            higher_tf_factor: default_cfg.higher_tf_factor as u32,
+            higher_tf_factor: u32::try_from(default_cfg.higher_tf_factor).unwrap_or(u32::MAX),
             detail: "All indicator math is per row index. The bar_interval label is for your own logs only. The higher_tf_factor config controls how many base bars roll into one higher-TF bar for ema_fast_higher / ema_slow_higher.",
         },
         strategies,

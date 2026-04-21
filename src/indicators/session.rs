@@ -29,8 +29,8 @@ pub fn session_series(candles: &[Candle]) -> Vec<SessionBar> {
             let h = c.close_time.hour();
             SessionBar {
                 in_asia_session: h < 8,
-                in_eu_session: h >= 7 && h < 14,
-                in_us_session: h >= 13 && h < 21,
+                in_eu_session: (7..14).contains(&h),
+                in_us_session: (13..21).contains(&h),
             }
         })
         .collect()
@@ -63,9 +63,7 @@ pub fn vol_trend_confirm_series(candles: &[Candle], window: usize) -> Vec<Option
             }
             let delta = c.inferred_delta()?;
             let price_dir = c.close - candles[i - 1].close;
-            let score = if price_dir > 0.0 && delta > 0.0 {
-                1.0
-            } else if price_dir < 0.0 && delta < 0.0 {
+            let score = if (price_dir > 0.0 && delta > 0.0) || (price_dir < 0.0 && delta < 0.0) {
                 1.0
             } else if (price_dir > 0.0 && delta < 0.0) || (price_dir < 0.0 && delta > 0.0) {
                 -1.0
@@ -130,7 +128,10 @@ mod tests {
         ];
         let vtc = vol_trend_confirm_series(&candles, 3);
         let last = vtc.last().unwrap().unwrap();
-        assert!(last > 0.0, "confirmed uptrend should be positive, got {last}");
+        assert!(
+            last > 0.0,
+            "confirmed uptrend should be positive, got {last}"
+        );
     }
 
     #[test]

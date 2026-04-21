@@ -59,11 +59,11 @@ pub fn aggression_ratio_series(candles: &[Candle], window: usize) -> Vec<Option<
         let mut sum_ratio = 0.0_f64;
         let mut count = 0usize;
         for c in slice {
-            if let Some(buy) = c.buy_volume {
-                if c.volume > 0.0 {
-                    sum_ratio += buy / c.volume;
-                    count += 1;
-                }
+            if let Some(buy) = c.buy_volume
+                && c.volume > 0.0
+            {
+                sum_ratio += buy / c.volume;
+                count += 1;
             }
         }
         if count > 0 {

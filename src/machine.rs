@@ -353,8 +353,14 @@ impl DecisionMachine {
     }
 
     /// Static discovery payload (also served as `GET /v1/catalog`).
+    ///
+    /// The catalog is built once on first call (JSON serialization of a sample frame +
+    /// BTreeMap flatten) and cached for the lifetime of the process.  Subsequent calls
+    /// clone the pre-built `String`-based entries — no JSON round-trip.
     pub fn catalog() -> crate::catalog::CatalogResponse {
-        crate::catalog::build_catalog_response()
+        static CATALOG: std::sync::LazyLock<crate::catalog::CatalogResponse> =
+            std::sync::LazyLock::new(crate::catalog::build_catalog_response);
+        CATALOG.clone()
     }
 
     /// Merge `request` into this machine's base [`StrategyConfig`] and build a [`PreparedDataset`]
@@ -421,10 +427,7 @@ impl DecisionMachine {
                 "at least one closed candle is required"
             ))
         })?;
-        if !supported_strategy_ids()
-            .iter()
-            .any(|&s| s == ctx.config.strategy_id.as_str())
-        {
+        if !supported_strategy_ids().contains(&ctx.config.strategy_id.as_str()) {
             return Err(EvaluateStrategyError::Unknown {
                 id: ctx.config.strategy_id.clone(),
             });
