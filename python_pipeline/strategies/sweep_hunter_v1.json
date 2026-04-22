@@ -1,0 +1,14 @@
+{
+  "name": "SweepHunter-1m",
+  "version": "v1",
+  "description": "Focuses exclusively on liquidity sweep setups — the highest-probability reversal pattern in crypto. When price hunts stop clusters and reverses, the move is fast and directional. Minimal features, high conviction.",
+  "timeframe": "1m",
+  "task_b": { "horizon_bars": 3, "k": 1.0, "vol_win": 30 },
+  "feature_layers": {
+    "sweep_detection": ["order_flow_liquidity_sweep_up", "order_flow_liquidity_sweep_down", "order_flow_thin_zone"],
+    "order_flow":      ["cvd_ema3", "cvd_ema3_slope", "order_flow_vwap_deviation_pct", "volume_obv_zscore"],
+    "volatility":      ["atr_pct", "vol_ratio", "atr_pct_baseline"],
+    "momentum":        ["momentum_rsi_14", "momentum_stoch_rsi_k", "momentum_stoch_rsi_d"],
+    "context":         ["order_flow_in_us_session", "order_flow_in_eu_session"]
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "date": "2026-04-21",
+  "data_source": "/Users/francesco/Desktop/rust_scalper_engine/src/historical_data/btcusd_1-min_data.csv",
+  "candle_interval": "1m",
+  "total_candles": 7517926,
+  "usable_rows_after_dropna": 6206764,
+  "split": {
+    "train": 4344734,
+    "val": 931014,
+    "test": 931016
+  },
+  "horizon": 5,
+  "threshold": 0.001,
+  "class_distribution": {
+    "DOWN": 1352508,
+    "FLAT": 3453807,
+    "UP": 1400449
+  },
+  "xgboost": {
+    "accuracy": 0.6780,
+    "precision_up": 0.3707,
+    "precision_down": 0.3640,
+    "best_iteration": 1984,
+    "model_file": "btc_xgb.json"
+  },
+  "lightgbm": {
+    "accuracy": 0.6784,
+    "precision_up": 0.3756,
+    "precision_down": 0.3660,
+    "best_iteration": 944,
+    "model_file": "btc_lgbm.txt"
+  },
+  "winner": "lightgbm"
+}

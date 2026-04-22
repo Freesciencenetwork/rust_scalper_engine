@@ -1,0 +1,21 @@
+{
+  "name": "RegimeSwitcher-Ranging-1m",
+  "version": "v1",
+  "description": "Trains only on ranging regime bars (ADX < 25). Mean-reversion features. Paired with RegimeSwitcher-Trending for full coverage.",
+  "timeframe": "1m",
+  "regime_filter": {
+    "type": "adx_threshold",
+    "column": "directional_adx_14",
+    "mode": "lt",
+    "threshold": 25,
+    "description": "Only bars where ADX < 25 — ranging/consolidating market"
+  },
+  "task_b": { "horizon_bars": 3, "k": 1.0, "vol_win": 30 },
+  "feature_layers": {
+    "vwap_reversion": ["trend_vwap_session_rel", "trend_vwap_upper_1sd_rel", "trend_vwap_lower_1sd_rel", "trend_vwap_upper_2sd_rel", "trend_vwap_lower_2sd_rel"],
+    "mean_reversion": ["momentum_rsi_14", "momentum_stoch_rsi_k", "momentum_stoch_rsi_d", "momentum_cci_20", "momentum_williams_r_14"],
+    "volatility":     ["volatility_bb_bandwidth_20", "volatility_bb_pct_b_20", "atr_pct", "volatility_ttm_squeeze_on"],
+    "order_flow":     ["cvd_ema3", "cvd_ema3_slope", "volume_obv_zscore"],
+    "regime":         ["directional_adx_14", "directional_aroon_up_25", "directional_aroon_down_25"]
+  }
+}

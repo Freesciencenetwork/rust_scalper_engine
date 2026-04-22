@@ -1,0 +1,21 @@
+{
+  "name": "MeanReversion-VWAP-1m",
+  "version": "v1",
+  "description": "Only trains and predicts on bars where price is stretched beyond VWAP ±1.5sd. Mean reversion scalp: buy when stretched below, sell when stretched above. Statistically proven VWAP reversion signal.",
+  "timeframe": "1m",
+  "regime_filter": {
+    "type": "vwap_stretch",
+    "column": "trend_vwap_session_rel",
+    "mode": "abs_gt",
+    "threshold": 0.0015,
+    "description": "Only include bars where |price - VWAP| / VWAP > 0.15% — i.e. price is stretched from fair value"
+  },
+  "task_b": { "horizon_bars": 3, "k": 1.0, "vol_win": 30 },
+  "feature_layers": {
+    "vwap_bands":         ["trend_vwap_session_rel", "trend_vwap_upper_1sd_rel", "trend_vwap_lower_1sd_rel", "trend_vwap_upper_2sd_rel", "trend_vwap_lower_2sd_rel"],
+    "momentum":           ["momentum_rsi_14", "momentum_stoch_rsi_k", "momentum_stoch_rsi_d", "momentum_cci_20", "momentum_williams_r_14"],
+    "volatility_context": ["atr_pct", "volatility_bb_bandwidth_20", "volatility_bb_pct_b_20", "vol_ratio"],
+    "order_flow":         ["cvd_ema3", "cvd_ema3_slope", "order_flow_vwap_deviation_pct"],
+    "session":            ["order_flow_in_us_session", "order_flow_in_eu_session", "order_flow_in_asia_session"]
+  }
+}

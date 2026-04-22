@@ -1,0 +1,14 @@
+{
+  "name": "VolBreakout-1m",
+  "version": "v1",
+  "description": "Breakout from volatility compression (TTM Squeeze + Bollinger Band squeeze). When market compresses then explodes, CVD slope tells direction. High-probability directional moves.",
+  "timeframe": "1m",
+  "task_b": { "horizon_bars": 5, "k": 1.0, "vol_win": 30 },
+  "feature_layers": {
+    "squeeze_detection": ["volatility_ttm_squeeze_on", "volatility_bb_bandwidth_20", "volatility_keltner_lower_20_rel", "volatility_keltner_upper_20_rel", "volatility_keltner_middle_20_rel"],
+    "breakout_confirm":  ["volatility_ttm_squeeze_momentum_norm" ,"cvd_ema3_slope", "cvd_ema3", "vol_ratio", "atr_pct"],
+    "direction":         ["momentum_macd_hist_norm", "momentum_rsi_14", "momentum_awesome_oscillator_5_34_norm", "momentum_elder_bull_norm", "momentum_elder_bear_norm"],
+    "range_context":     ["volatility_donchian_upper_20_rel", "volatility_donchian_lower_20_rel", "volatility_donchian_mid_20_rel", "volatility_chandelier_long_stop_22_3_rel"],
+    "session":           ["order_flow_in_us_session", "order_flow_in_eu_session"]
+  }
+}

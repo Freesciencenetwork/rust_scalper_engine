@@ -80,3 +80,52 @@ def load_ohlcv(path: str) -> pd.DataFrame:
         df["timestamp"].iloc[-1],
     )
     return df
+
+
+def resample_ohlcv(df: pd.DataFrame, rule: str = "15min") -> pd.DataFrame:
+    """
+    Resample a 1m (or any granularity) OHLCV DataFrame to a lower frequency.
+
+    Aggregation rules:
+      open   -> first value in bucket
+      high   -> max value in bucket
+      low    -> min value in bucket
+      close  -> last value in bucket
+      volume -> sum of bucket
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Must contain columns: timestamp, open, high, low, close, volume.
+        Sorted ascending by timestamp (load_ohlcv guarantees this).
+    rule : str
+        pandas offset alias, e.g. "15min", "1h", "4h", "1D".
+
+    Returns
+    -------
+    pd.DataFrame
+        Resampled OHLCV, sorted ascending, index reset, same column schema.
+        Buckets with no data are dropped (no forward-fill).
+    """
+    df2 = df.set_index("timestamp")
+
+    # tz-aware index needs tz-aware rule; tz-naive needs tz-naive.
+    # pandas resample handles both transparently.
+    agg = df2.resample(rule, label="left", closed="left").agg(
+        open=("open",   "first"),
+        high=("high",   "max"),
+        low=("low",     "min"),
+        close=("close", "last"),
+        volume=("volume", "sum"),
+    )
+
+    # Drop incomplete buckets (no trades in that window)
+    agg.dropna(subset=["open", "close"], inplace=True)
+    agg.reset_index(inplace=True)
+    agg.rename(columns={"index": "timestamp"}, inplace=True)
+
+    logger.info(
+        "Resampled %d -> %d candles at %s frequency",
+        len(df), len(agg), rule,
+    )
+    return agg

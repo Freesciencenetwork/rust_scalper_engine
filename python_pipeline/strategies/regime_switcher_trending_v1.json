@@ -1,0 +1,21 @@
+{
+  "name": "RegimeSwitcher-Trending-1m",
+  "version": "v1",
+  "description": "Trains only on trending regime bars (ADX > 25). Momentum-based features. Paired with RegimeSwitcher-Ranging for full coverage.",
+  "timeframe": "1m",
+  "regime_filter": {
+    "type": "adx_threshold",
+    "column": "directional_adx_14",
+    "mode": "gt",
+    "threshold": 25,
+    "description": "Only bars where ADX > 25 — trending market"
+  },
+  "task_b": { "horizon_bars": 3, "k": 1.0, "vol_win": 30 },
+  "feature_layers": {
+    "regime":     ["directional_adx_14", "directional_di_plus", "directional_di_minus", "volatility_supertrend_10_3_rel", "directional_psar_trend_long"],
+    "momentum":   ["momentum_rsi_14", "momentum_macd_hist_norm", "momentum_macd_line_norm", "momentum_macd_signal_norm", "momentum_roc_10", "momentum_tsi_25_13"],
+    "order_flow": ["cvd_ema3", "cvd_ema3_slope", "order_flow_vwap_deviation_pct"],
+    "session":    ["order_flow_in_us_session", "order_flow_in_eu_session", "order_flow_in_asia_session"],
+    "volatility": ["atr_pct", "vol_ratio", "volatility_supertrend_10_3_rel"]
+  }
+}

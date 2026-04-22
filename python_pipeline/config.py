@@ -96,3 +96,59 @@ MACD_SIGNAL       = 9
 EMA_FAST          = 9
 EMA_SLOW          = 21
 VOL_ZSCORE_WIN    = 20
+
+# ---------------------------------------------------------------------------
+# Task A — MOVE vs NO_MOVE  (binary, 1-minute candles)
+#
+# MOVE definition:
+#   rolling_vol[t] = std( ret_1[t-VOL_WIN : t] )    <- past data only
+#   future_ret[t]  = (close[t+H] - close[t]) / close[t]
+#   MOVE if abs(future_ret[t]) > K * rolling_vol[t]
+#
+# K is the signal-to-noise multiplier. K=1.0 means any move larger than
+# one rolling-std is labelled MOVE. Raise K to make the task harder but
+# more directionally clean; lower K to increase MOVE frequency.
+# ---------------------------------------------------------------------------
+TASK_A_HORIZON   = 5      # bars ahead (= 5 minutes on 1m data)
+TASK_A_VOL_WIN   = 20     # Rust hist_vol_logrets_20 window (kept for reference only)
+TASK_A_K         = 3.7    # threshold multiplier for trend_hist_vol_logrets_20
+                           # k=3.7 gives ~44% MOVE rate, matching the original
+                           # rolling_std(ret_1, 60) k=1.0 baseline
+TASK_A_LABEL_MOVE   = 1
+TASK_A_LABEL_NOMOVE = 0
+
+# ---------------------------------------------------------------------------
+# Task B — UP vs DOWN on MOVE bars only  (binary, 15-minute candles)
+# Same vol-scaled formula but applied to resampled 15m candles.
+# ---------------------------------------------------------------------------
+TASK_B_HORIZON  = 3       # bars ahead (= 3 minutes on 1m data)
+TASK_B_VOL_WIN  = 20      # Rust hist_vol_logrets_20 window (kept for reference only)
+TASK_B_K        = 3.7     # same multiplier as Task A for consistency
+TASK_B_LABEL_UP   = 1
+TASK_B_LABEL_DOWN = 0
+
+# ---------------------------------------------------------------------------
+# Walk-forward cross-validation
+# ---------------------------------------------------------------------------
+WF_N_FOLDS    = 5     # number of test folds (expanding window)
+WF_VAL_RATIO  = 0.15  # fraction of training window held out for early-stopping
+
+# ---------------------------------------------------------------------------
+# LightGBM — binary tasks  (Task A and Task B)
+# is_unbalance=True compensates for MOVE/NO_MOVE skew without manual weighting.
+# ---------------------------------------------------------------------------
+LGBM_BINARY_PARAMS = {
+    "objective"       : "binary",
+    "n_estimators"    : 500,
+    "learning_rate"   : 0.05,
+    "num_leaves"      : 31,
+    "max_depth"       : -1,
+    "subsample"       : 0.8,
+    "colsample_bytree": 0.8,
+    "min_child_samples": 20,
+    "random_state"    : RANDOM_SEED,
+    "n_jobs"          : 4,          # cap threads — n_jobs=-1 copies data per core
+    "verbose"         : -1,
+    "is_unbalance"    : True,
+}
+LGBM_BINARY_EARLY_STOPPING = 50

@@ -1,0 +1,14 @@
+{
+  "name": "TrendRider-1m",
+  "version": "v1",
+  "description": "Momentum-following in trending conditions. Targets the EU/US session overlap where 60%+ of daily BTC volume occurs. Trades with the trend using multiple momentum confirmations.",
+  "timeframe": "1m",
+  "task_b": { "horizon_bars": 5, "k": 1.0, "vol_win": 60 },
+  "feature_layers": {
+    "trend_direction": ["directional_adx_14", "directional_di_plus", "directional_di_minus", "volatility_supertrend_10_3_rel", "directional_psar_trend_long", "directional_vortex_vi_plus_14", "directional_vortex_vi_minus_14"],
+    "momentum_stack":  ["momentum_macd_hist_norm", "momentum_macd_line_norm", "momentum_roc_10", "momentum_tsi_25_13", "momentum_awesome_oscillator_5_34_norm", "momentum_kvo_34_55_norm"],
+    "ema_context":     ["ema_fast_rel", "ema_slow_rel", "trend_ema_20_rel", "trend_sma_50_rel", "trend_hull_9_rel"],
+    "session":         ["order_flow_in_us_session", "order_flow_in_eu_session"],
+    "volume_confirm":  ["cvd_ema3_slope", "volume_obv_zscore", "vol_ratio"]
+  }
+}

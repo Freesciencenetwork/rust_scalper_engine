@@ -42,6 +42,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _legacy_entrypoint_disabled() -> None:
+    raise SystemExit(
+        "train.py is disabled. This legacy path computes Python-side features.\n"
+        "Use the Rust-backed pipeline instead:\n"
+        "  cd python_pipeline\n"
+        "  python3 prepare_rust_features.py --server http://127.0.0.1:8080\n"
+        "  python3 train_v2.py --task both"
+    )
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Lazy imports — XGBoost and LightGBM are only imported after argument parsing
 # so that --help works even without them installed.
@@ -271,4 +281,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    _legacy_entrypoint_disabled()

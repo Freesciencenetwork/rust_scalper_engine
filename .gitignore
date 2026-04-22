@@ -4,6 +4,9 @@
 .cursor/
 .env
 .env.*
+# Local agent / session memory
+memory.json
+memory.txt
 /target
 src/historical_data/btcusd_1-min_data.csv
 src/historical_data/request.json

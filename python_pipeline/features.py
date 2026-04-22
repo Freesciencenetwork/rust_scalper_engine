@@ -10,6 +10,7 @@ Design principles:
       add_features(df)        -> df with feature columns appended
       add_target(df, h, thr)  -> df with 'target' column appended
 """
+from typing import Dict, List, Optional, Tuple
 
 import logging
 import numpy as np
@@ -55,7 +56,7 @@ def _macd(
     fast: int   = config.MACD_FAST,
     slow: int   = config.MACD_SLOW,
     signal: int = config.MACD_SIGNAL,
-) -> tuple[pd.Series, pd.Series, pd.Series]:
+) -> Tuple[pd.Series, pd.Series, pd.Series]:
     """
     Returns (macd_line, signal_line, histogram).
     All computed on past bars (shift by 1 before EMA).
@@ -150,10 +151,90 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ── Canonical feature column list ─────────────────────────────────────────
-# Used by train.py to slice X and by feature_schema.json to guarantee the
-# same column order at inference time.
-FEATURE_COLUMNS: list[str] = [
+def add_extended_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Extend a DataFrame that already has base features (from add_features)
+    with additional signals useful for the vol-scaled binary tasks.
+
+    New features
+    ------------
+    Lagged returns        : ret_2, ret_10, ret_15, ret_30
+    High-low range        : hl_range  = (high - low) / close.shift(1)
+    Realized volatility   : realized_vol_20, realized_vol_60
+                            = rolling std of ret_1 over past N bars
+    Momentum              : mom_10, mom_20  = sum of ret_1 over past N bars
+    Mean-reversion dist   : dist_ema20, dist_ema50
+                            = close / ema(N) - 1  (using past close)
+    Time-of-day features  : hour_of_day, day_of_week
+                            (from timestamp column; zero-filled if absent)
+
+    Stubs (NOT computed — require external data sources)
+    ----------------------------------------------------
+    funding_rate          : perpetual futures funding rate
+    open_interest         : aggregate OI from exchange
+    bid_ask_spread        : level-2 order book
+    order_flow_imbalance  : signed trade imbalance from tick data
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Must already have base features + timestamp column.
+
+    Returns
+    -------
+    pd.DataFrame with extended feature columns appended.
+    """
+    df = df.copy()
+    close  = df["close"]
+    ret_1  = df["ret_1"]   # already computed in add_features
+
+    # ── Additional lagged returns ────────────────────────────────────────────
+    df["ret_2"]  = close.pct_change(2)
+    df["ret_10"] = close.pct_change(10)
+    df["ret_15"] = close.pct_change(15)
+    df["ret_30"] = close.pct_change(30)
+
+    # ── High-low range (normalized ATR proxy) ────────────────────────────────
+    # Using shift(1) on the denominator ensures no within-bar leakage.
+    prev_close = close.shift(1)
+    df["hl_range"] = (df["high"] - df["low"]) / prev_close
+
+    # ── Realized volatility ──────────────────────────────────────────────────
+    # shift(1) on ret_1 so the current bar's return is excluded from the window.
+    past_ret = ret_1.shift(1)
+    df["realized_vol_20"] = past_ret.rolling(20).std()
+    df["realized_vol_60"] = past_ret.rolling(60).std()
+
+    # ── Momentum (sum of past N returns) ────────────────────────────────────
+    df["mom_10"] = past_ret.rolling(10).sum()
+    df["mom_20"] = past_ret.rolling(20).sum()
+
+    # ── Mean-reversion distance from EMA ────────────────────────────────────
+    ema20 = _ema(close.shift(1), 20)
+    ema50 = _ema(close.shift(1), 50)
+    df["dist_ema20"] = close / ema20 - 1
+    df["dist_ema50"] = close / ema50 - 1
+
+    # ── Time-of-day and day-of-week ──────────────────────────────────────────
+    # Captures intraday seasonality (e.g. Asian/European/US session effects)
+    # and day-of-week patterns (e.g. weekend low-liquidity effects).
+    if "timestamp" in df.columns:
+        ts = pd.to_datetime(df["timestamp"])
+        df["hour_of_day"]  = ts.dt.hour.astype(np.float32)
+        df["day_of_week"]  = ts.dt.dayofweek.astype(np.float32)
+    else:
+        df["hour_of_day"] = 0.0
+        df["day_of_week"] = 0.0
+
+    df.replace([np.inf, -np.inf], np.nan, inplace=True)
+    return df
+
+
+# ── Canonical feature column lists ────────────────────────────────────────
+# FEATURE_COLUMNS   : original 15, used by legacy train.py
+# EXTENDED_FEATURE_COLUMNS : additional 14, used by Task A / Task B
+# ALL_FEATURE_COLUMNS : union — the recommended set for new experiments
+FEATURE_COLUMNS: List[str] = [
     "ret_1",
     "ret_3",
     "ret_5",
@@ -170,6 +251,24 @@ FEATURE_COLUMNS: list[str] = [
     "ema_slow",
     "ema_spread",
 ]
+
+EXTENDED_FEATURE_COLUMNS: List[str] = [
+    "ret_2",
+    "ret_10",
+    "ret_15",
+    "ret_30",
+    "hl_range",
+    "realized_vol_20",
+    "realized_vol_60",
+    "mom_10",
+    "mom_20",
+    "dist_ema20",
+    "dist_ema50",
+    "hour_of_day",
+    "day_of_week",
+]
+
+ALL_FEATURE_COLUMNS: List[str] = FEATURE_COLUMNS + EXTENDED_FEATURE_COLUMNS
 
 
 def add_target(

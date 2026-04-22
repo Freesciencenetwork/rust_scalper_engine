@@ -1,5 +1,6 @@
 # state
 
+- **2026-04-22 — `python_pipeline` tree doc:** Added `python_pipeline/FILE_TREE.md` (ASCII tree + regen one-liner). Update when layout changes.
 - **2026-04-20 — rust-strict-build (S0–S2):** `cargo fmt --all` applied; `RUSTFLAGS=-Dwarnings` `cargo check --workspace --all-targets --locked` (+ `--release`) pass; Clippy full deny ladder (incl. pedantic/nursery, doc allows per rule) green. Fixes: `catalog/warmup.rs` split helpers + merged match arms + `u32::try_from` paths; `historical_data/mod.rs` `bundle_time_bounds`/`parse_csv_candle_line`, `map_or_else`, `const fn` date helpers; `catalog.rs` `#[must_use]`, `IndicatorSnapshot::default()`; indicators/session/order_flow/liquidity_sweep; `machine` `contains`; `fetch_max_btcusdt_1m` literals/`map_or_else`/`is_multiple_of`; `tests/indicators_all` range asserts.
 - **2026-04-19 — HTTP `POST /v1/strategies/{id}`:** last-bar **`StrategyEvaluateResponse`**; **`DecisionMachine::evaluate_strategy`**; README §1 adds same **`candles` → `POST …/strategies/default`**.
 - **2026-04-19 — README integration:** §1 = **local CSV → `candles` → indicator + strategy last-bar `POST`s**; §2 = optional **`bundled` + `/replay`** one-shot; mermaid for each.
