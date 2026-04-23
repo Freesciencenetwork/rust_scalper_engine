@@ -1,5 +1,6 @@
 # state
 
+- **2026-04-23 — Git big blobs:** After `git fetch`, `origin/main` tip (`ea9dc00`) already omits large `python_pipeline/data/*` and model dumps from the **tree**; `.gitignore` covers data + models. Blobs still reachable via older commits (`697e048`…); full pack shrink needs `git filter-repo` (or BFG), not done here. Local backup ref: `backup/pre-strip-big-blobs-20260423` → old `4df3e2c`.
 - **2026-04-23 — `.gitignore`:** `python_pipeline/models/**` — ignore `*.parquet`, `*.pkl`, `*.joblib`, `*.bin`, `server.log` (large run artifacts).
 - **2026-04-23 — Root README Rust-only:** Removed profitability / Python train blocks from root `README.md`. Added API **Backtest** row. Integration patterns = `curl` + `examples/` pointer; new **Repo map** table → `python_pipeline/README.md`. Prompt `master_profitability_model_prompt.md` hygiene line no longer claims root README covers Python policy.
 - **2026-04-23 — README train steps:** Root `README.md` § Profitability — **Steps to train a profitability model** (pip `requirements.txt`, server note, `prepare_feature_cache.py`, `run_profitability_workflow.py`, read `models/runs/.../README.md`). Same numbered section + intro (this file = pipeline README, cwd = repo root) in `python_pipeline/README.md`.
