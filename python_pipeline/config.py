@@ -152,3 +152,9 @@ LGBM_BINARY_PARAMS = {
     "is_unbalance"    : True,
 }
 LGBM_BINARY_EARLY_STOPPING = 50
+
+# ---------------------------------------------------------------------------
+# Profitability meta-model
+# ---------------------------------------------------------------------------
+PROFITABILITY_BUFFER_R = 0.3
+LGBM_PROFITABILITY_PARAMS = dict(LGBM_BINARY_PARAMS)

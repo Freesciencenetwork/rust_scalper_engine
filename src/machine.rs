@@ -67,6 +67,11 @@ pub struct MachineRequest {
     /// Bundled **`btcusd_1-min_data.csv`** slice (UTC calendar **`from`**/**`to`** or **`all: true`**).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bundled_btcusd_1m: Option<BundledBtcUsd1m>,
+    /// Optional server-side resample applied **only** when using `bundled_btcusd_1m`.
+    /// Examples: `"15m"`, `"1h"`, `"4h"`. Set top-level `bar_interval` as well if the client
+    /// wants the same label echoed in logs / saved request bodies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundled_resample_interval: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -317,6 +322,7 @@ fn build_machine_capabilities() -> MachineCapabilities {
             "candles".to_string(),
             "synthetic_series".to_string(),
             "bundled_btcusd_1m".to_string(),
+            "bundled_resample_interval".to_string(),
             "macro_events_numeric".to_string(),
             "symbol_filters".to_string(),
             "runtime_state_numeric".to_string(),
@@ -657,7 +663,7 @@ fn replay_day_range_to_indices(
     }
 }
 
-fn resolve_replay_window_indices(
+pub(crate) fn resolve_replay_window_indices(
     frames: &[PreparedCandle],
     last: usize,
     from_index: Option<usize>,
@@ -811,6 +817,7 @@ fn resolve_candles(
     candles: Vec<Candle>,
     synthetic: Option<&SyntheticSeries>,
     bundled: Option<&BundledBtcUsd1m>,
+    bundled_resample_interval: Option<&str>,
     bar_interval: &Option<String>,
 ) -> Result<Vec<Candle>> {
     let n_src = (!candles.is_empty() as u8) + synthetic.is_some() as u8 + bundled.is_some() as u8;
@@ -823,7 +830,8 @@ fn resolve_candles(
         return Ok(candles);
     }
     if let Some(b) = bundled {
-        return load_btcusd_1m(b);
+        let candles = load_btcusd_1m(b)?;
+        return resample_bundled_candles(candles, bundled_resample_interval);
     }
     if let Some(spec) = synthetic {
         return build_synthetic_candles(spec, bar_interval);
@@ -831,6 +839,77 @@ fn resolve_candles(
     Err(anyhow!(
         "empty `candles`: provide bars, `synthetic_series`, or `bundled_btcusd_1m`"
     ))
+}
+
+fn resample_bundled_candles(candles: Vec<Candle>, interval: Option<&str>) -> Result<Vec<Candle>> {
+    let Some(label) = interval.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(candles);
+    };
+    let interval_ms = bar_interval_label_to_ms(label).ok_or_else(|| {
+        anyhow!(
+            "bundled_resample_interval must be a parseable label like \"15m\", \"1h\", \"4h\""
+        )
+    })?;
+    if interval_ms == 60_000 {
+        return Ok(candles);
+    }
+    if interval_ms < 60_000 || interval_ms % 60_000 != 0 {
+        bail!("bundled_resample_interval must be a whole-number multiple of 1m");
+    }
+
+    let group_size = usize::try_from(interval_ms / 60_000).context("resample group size")?;
+    let interval_ms_i64 = i64::try_from(interval_ms).context("resample interval")?;
+    let mut out = Vec::with_capacity(candles.len() / group_size.max(1));
+    let mut group: Vec<Candle> = Vec::with_capacity(group_size);
+    let mut current_bucket: Option<i64> = None;
+
+    for candle in candles {
+        let close_ms = candle.close_time.timestamp_millis();
+        let bucket = close_ms
+            .checked_sub(1)
+            .ok_or_else(|| anyhow!("cannot resample candle at unix epoch"))?
+            .div_euclid(interval_ms_i64);
+        if let Some(active) = current_bucket
+            && active != bucket
+        {
+            if group.len() == group_size {
+                out.push(collapse_candle_group(&group));
+            }
+            group.clear();
+        }
+        current_bucket = Some(bucket);
+        group.push(candle);
+    }
+
+    if group.len() == group_size {
+        out.push(collapse_candle_group(&group));
+    }
+    if out.is_empty() {
+        bail!("bundled_resample_interval {label:?} produced zero full candles");
+    }
+    Ok(out)
+}
+
+fn collapse_candle_group(group: &[Candle]) -> Candle {
+    let first = &group[0];
+    let last = &group[group.len() - 1];
+    Candle {
+        close_time: last.close_time,
+        open: first.open,
+        high: group
+            .iter()
+            .map(|candle| candle.high)
+            .fold(f64::NEG_INFINITY, f64::max),
+        low: group
+            .iter()
+            .map(|candle| candle.low)
+            .fold(f64::INFINITY, f64::min),
+        close: last.close,
+        volume: group.iter().map(|candle| candle.volume).sum(),
+        buy_volume: None,
+        sell_volume: None,
+        delta: None,
+    }
 }
 
 fn merge_request_and_build_dataset(
@@ -847,12 +926,14 @@ fn merge_request_and_build_dataset(
         config_overrides,
         synthetic_series,
         bundled_btcusd_1m,
+        bundled_resample_interval,
     } = request;
 
     let candles = resolve_candles(
         candles,
         synthetic_series.as_ref(),
         bundled_btcusd_1m.as_ref(),
+        bundled_resample_interval.as_deref(),
         &bar_interval,
     )?;
 
@@ -999,6 +1080,7 @@ mod tests {
             config_overrides: None,
             synthetic_series: None,
             bundled_btcusd_1m: None,
+            bundled_resample_interval: None,
         };
 
         let out = machine
@@ -1039,6 +1121,7 @@ mod tests {
             config_overrides: None,
             synthetic_series: None,
             bundled_btcusd_1m: None,
+            bundled_resample_interval: None,
         };
         let err = machine
             .evaluate_indicator("not_a_catalog_leaf", req)
@@ -1091,6 +1174,7 @@ mod tests {
                 bar_count: Some(120),
             }),
             bundled_btcusd_1m: None,
+            bundled_resample_interval: None,
         };
         let out = machine
             .evaluate_indicator("ema_fast", req)
@@ -1134,6 +1218,7 @@ mod tests {
                 bar_count: Some(10),
             }),
             bundled_btcusd_1m: None,
+            bundled_resample_interval: None,
         };
         let err = machine.evaluate_indicator("ema_fast", req).unwrap_err();
         let msg = err.to_string();
@@ -1186,6 +1271,7 @@ mod tests {
                 config_overrides: None,
                 synthetic_series: None,
                 bundled_btcusd_1m: None,
+                bundled_resample_interval: None,
             },
             from_index: Some(20),
             to_index: Some(22),
@@ -1243,6 +1329,7 @@ mod tests {
             config_overrides: None,
             synthetic_series: None,
             bundled_btcusd_1m: None,
+            bundled_resample_interval: None,
         };
         let last_eval = machine
             .evaluate_strategy(machine_req.clone())
@@ -1302,6 +1389,7 @@ mod tests {
                 config_overrides: None,
                 synthetic_series: None,
                 bundled_btcusd_1m: None,
+                bundled_resample_interval: None,
             },
             from_index: Some(0),
             to_index: Some(2),
@@ -1316,5 +1404,54 @@ mod tests {
         assert_eq!(out.steps.len(), 95);
         assert_eq!(out.steps[0].bar_index, 0);
         assert_eq!(out.steps[94].bar_index, 94);
+    }
+
+    #[test]
+    fn bundled_resample_aggregates_full_15m_buckets() {
+        let base = Utc.with_ymd_and_hms(2026, 4, 15, 0, 1, 0).unwrap();
+        let candles: Vec<Candle> = (0..15)
+            .map(|i| Candle {
+                close_time: base + Duration::minutes(i as i64),
+                open: 100.0 + i as f64,
+                high: 101.0 + i as f64,
+                low: 99.0 + i as f64,
+                close: 100.5 + i as f64,
+                volume: 10.0 + i as f64,
+                buy_volume: None,
+                sell_volume: None,
+                delta: None,
+            })
+            .collect();
+
+        let out = super::resample_bundled_candles(candles, Some("15m")).expect("resample");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].close_time, Utc.with_ymd_and_hms(2026, 4, 15, 0, 15, 0).unwrap());
+        assert_eq!(out[0].open, 100.0);
+        assert_eq!(out[0].high, 115.0);
+        assert_eq!(out[0].low, 99.0);
+        assert_eq!(out[0].close, 114.5);
+        assert_eq!(out[0].volume, (0..15).map(|i| 10.0 + i as f64).sum::<f64>());
+    }
+
+    #[test]
+    fn bundled_resample_drops_partial_edge_buckets() {
+        let base = Utc.with_ymd_and_hms(2026, 4, 15, 0, 1, 0).unwrap();
+        let candles: Vec<Candle> = (0..20)
+            .map(|i| Candle {
+                close_time: base + Duration::minutes(i as i64),
+                open: 1.0,
+                high: 2.0,
+                low: 0.5,
+                close: 1.5,
+                volume: 1.0,
+                buy_volume: None,
+                sell_volume: None,
+                delta: None,
+            })
+            .collect();
+
+        let out = super::resample_bundled_candles(candles, Some("15m")).expect("resample");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].close_time, Utc.with_ymd_and_hms(2026, 4, 15, 0, 15, 0).unwrap());
     }
 }
