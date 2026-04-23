@@ -1,5 +1,5 @@
 """
-fetch_indicators.py — Fetch all 132 computable indicator values from the Rust server
+collect_indicators.py — Fetch all 132 computable indicator values from the Rust server
 and save as a Parquet file for use as ML features.
 
 Strategy
@@ -15,24 +15,27 @@ Each chunk request:
   from_index: warmup_bars                                  ← skip warmup in output
   to_index:   <end of loaded slice>
 
-Output: data/indicators_full.parquet
-  - One row per 1m bar (matching btcusd_1-min_data.csv)
+Output: python_pipeline/data/indicators_full.parquet
+  - One row per emitted Rust replay bar (1m by default, or a server-side bundled resample)
   - Columns: timestamp_ms, <indicator_path>, ...
   - NaN for bars where indicator hasn't warmed up yet
 
 Usage
-  python3 fetch_indicators.py
-  python3 fetch_indicators.py --server http://localhost:8080 --out data/indicators_full.parquet
-  python3 fetch_indicators.py --from 2020-01-01 --to 2024-12-31   # partial run
+  python3 python_pipeline/ingest/collect_indicators.py
+  python3 python_pipeline/ingest/collect_indicators.py --server http://localhost:8080 --out python_pipeline/data/indicators_full.parquet
+  python3 python_pipeline/ingest/collect_indicators.py --from 2020-01-01 --to 2024-12-31   # partial run
 """
 
 import argparse
 import json
 import logging
+import math
 import os
 import sys
 import time
 from datetime import date, timedelta
+from typing import Optional
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -45,7 +48,9 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 logger = logging.getLogger(__name__)
-METADATA_PATH = "data/indicators_full.metadata.json"
+ROOT_DIR = Path(__file__).resolve().parents[1]
+DATA_DIR = ROOT_DIR / "data"
+DEFAULT_METADATA_PATH = str(DATA_DIR / "indicators_full.metadata.json")
 
 # ── All indicators computable from OHLCV (no buy/sell volume required) ─────
 INDICATORS = [
@@ -196,6 +201,21 @@ CHUNK_MONTHS  = 6      # size of each calendar chunk
 SERVER_TIMEOUT = 300   # seconds per request
 
 
+def interval_label_to_minutes(label: str) -> int:
+    text = label.strip().lower()
+    if not text:
+        raise ValueError("bar interval must not be empty")
+    if text.endswith("m"):
+        return int(text[:-1])
+    if text.endswith("h"):
+        return int(text[:-1]) * 60
+    if text.endswith("d"):
+        return int(text[:-1]) * 24 * 60
+    if text.endswith("w"):
+        return int(text[:-1]) * 7 * 24 * 60
+    raise ValueError(f"unsupported bar interval {label!r}; use labels like 1m, 15m, 1h")
+
+
 def date_range_chunks(start: date, end: date, months: int):
     """Yield (chunk_start, chunk_end) date pairs with no overlap."""
     cur = start
@@ -210,7 +230,14 @@ def date_range_chunks(start: date, end: date, months: int):
         cur = chunk_end + timedelta(days=1)
 
 
-def fetch_chunk(server: str, warmup_start: date, chunk_end: date, warmup_days: int) -> pd.DataFrame:
+def fetch_chunk(
+    server: str,
+    warmup_start: date,
+    chunk_end: date,
+    warmup_bars: int,
+    bar_interval: str,
+    bundled_resample_interval: Optional[str],
+) -> pd.DataFrame:
     """
     Fetch indicator values for one calendar chunk.
 
@@ -223,9 +250,12 @@ def fetch_chunk(server: str, warmup_start: date, chunk_end: date, warmup_days: i
             "from": warmup_start.isoformat(),
             "to"  : chunk_end.isoformat(),
         },
-        "from_index": warmup_days * 1440,   # 1 day = 1440 1m bars
+        "bar_interval": bar_interval,
+        "from_index": warmup_bars,
         "indicators": INDICATORS,
     }
+    if bundled_resample_interval:
+        payload["bundled_resample_interval"] = bundled_resample_interval
 
     resp = requests.post(url, json=payload, timeout=SERVER_TIMEOUT)
     resp.raise_for_status()
@@ -250,15 +280,26 @@ def fetch_chunk(server: str, warmup_start: date, chunk_end: date, warmup_days: i
 def main():
     parser = argparse.ArgumentParser(description="Fetch Rust indicator values for full BTC history")
     parser.add_argument("--server", default="http://localhost:8080")
-    parser.add_argument("--out",    default="data/indicators_full.parquet")
+    parser.add_argument("--out",    default=str(DATA_DIR / "indicators_full.parquet"))
     parser.add_argument("--from",   dest="from_date", default="2012-01-02",
                         help="Start date YYYY-MM-DD (default: 2012-01-02)")
     parser.add_argument("--to",     dest="to_date",   default=None,
                         help="End date YYYY-MM-DD (default: today)")
+    parser.add_argument("--bar-interval", default="1m",
+                        help="Logical replay interval for the output rows (default: 1m)")
+    parser.add_argument("--bundled-resample-interval", default=None,
+                        help="Optional server-side resample for bundled 1m CSV input, e.g. 15m")
+    parser.add_argument("--metadata-out", default=None,
+                        help="Metadata JSON path (default: <out>.metadata.json)")
     args = parser.parse_args()
 
     start = date.fromisoformat(args.from_date)
     end   = date.fromisoformat(args.to_date) if args.to_date else date.today()
+    interval_label = args.bar_interval
+    resample_label = args.bundled_resample_interval
+    interval_minutes = interval_label_to_minutes(resample_label or interval_label)
+    warmup_bars = math.ceil((WARMUP_DAYS * 1440) / interval_minutes)
+    metadata_path = args.metadata_out or os.path.splitext(args.out)[0] + ".metadata.json"
 
     # Health check
     try:
@@ -267,8 +308,20 @@ def main():
         logger.error("Server not reachable at %s: %s", args.server, e)
         sys.exit(1)
 
-    logger.info("Fetching %d indicators from %s to %s", len(INDICATORS), start, end)
-    logger.info("Chunk size: %d months  |  Warmup: %d days", CHUNK_MONTHS, WARMUP_DAYS)
+    logger.info(
+        "Fetching %d indicators from %s to %s  |  bar_interval=%s  bundled_resample=%s",
+        len(INDICATORS),
+        start,
+        end,
+        interval_label,
+        resample_label or "none",
+    )
+    logger.info(
+        "Chunk size: %d months  |  Warmup: %d days -> %d bars",
+        CHUNK_MONTHS,
+        WARMUP_DAYS,
+        warmup_bars,
+    )
 
     chunks = list(date_range_chunks(start, end, CHUNK_MONTHS))
     logger.info("Total chunks: %d", len(chunks))
@@ -284,7 +337,14 @@ def main():
         )
         t0 = time.time()
         try:
-            df = fetch_chunk(args.server, warmup_start, chunk_end, WARMUP_DAYS)
+            df = fetch_chunk(
+                args.server,
+                warmup_start,
+                chunk_end,
+                warmup_bars,
+                interval_label,
+                resample_label,
+            )
         except requests.HTTPError as e:
             logger.error("  HTTP error: %s — skipping chunk", e)
             continue
@@ -338,13 +398,15 @@ def main():
         "server": args.server.rstrip("/"),
         "from": start.isoformat(),
         "to": end.isoformat(),
+        "bar_interval": interval_label,
+        "bundled_resample_interval": resample_label,
         "rows": int(len(full)),
         "columns": list(full.columns),
         "indicator_count": len([c for c in full.columns if c != "timestamp_ms"]),
     }
-    with open(METADATA_PATH, "w") as fh:
+    with open(metadata_path, "w") as fh:
         json.dump(metadata, fh, indent=2)
-    logger.info("Saved metadata -> %s", METADATA_PATH)
+    logger.info("Saved metadata -> %s", metadata_path)
 
 
 if __name__ == "__main__":

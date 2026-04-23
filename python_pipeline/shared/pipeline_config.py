@@ -1,5 +1,5 @@
 """
-config.py — Central configuration for BTC direction prediction pipeline.
+pipeline_config.py — Central configuration for BTC direction prediction pipeline.
 
 All tuneable knobs live here. Import this module everywhere instead of
 hardcoding values so that a single change propagates through the whole
@@ -11,8 +11,8 @@ import os
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR   = os.path.join(BASE_DIR, "data")
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(BASE_DIR, "data")
 MODELS_DIR = os.path.join(BASE_DIR, "models")
 
 DATA_PATH          = os.path.join(DATA_DIR,   "btc_ohlcv.csv")

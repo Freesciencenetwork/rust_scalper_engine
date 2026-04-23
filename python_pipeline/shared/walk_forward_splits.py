@@ -1,5 +1,5 @@
 """
-walk_forward.py — Expanding-window walk-forward cross-validation.
+walk_forward_splits.py — Expanding-window walk-forward cross-validation.
 
 Why walk-forward?
   Financial time series must NOT be randomly split.  The model must always

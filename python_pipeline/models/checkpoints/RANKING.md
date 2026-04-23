@@ -10,4 +10,4 @@ Sorted by MCC (descending). Generated 2026-04-22 10:36.
 | 4    | btc_1m_3class_down-flat-up_lgbm_acc68pct_noedge_20260421 | 3-class (DOWN / FLAT / UP)                | 1m        | 5b      | 15    | n/a     | 67.8%   | NO (accuracy misleading: FLAT dominates) |
 
 ---
-*Run `python3 rank_checkpoints.py` to refresh.*
+Historical snapshot of checkpoint ranking data.

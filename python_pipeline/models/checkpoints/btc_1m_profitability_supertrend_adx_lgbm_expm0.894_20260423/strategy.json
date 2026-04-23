@@ -1,0 +1,71 @@
+{
+  "name": "SupertrendADX-ProfitGate-15m",
+  "version": "v1",
+  "mode": "profitability_filter",
+  "base_strategy_id": "supertrend_adx",
+  "timeframe": "15m",
+  "description": "Profitability gate for the Rust supertrend_adx strategy. The base strategy already requires SuperTrend alignment plus ADX/DMI confirmation. This model only decides whether an already-valid trend-continuation entry is worth taking after fees and slippage.",
+  "why_this_should_work": [
+    "It is the best trainable 15m Rust candidate screened so far: 1,387 resolved trades from 2020-01-01 to 2026-04-19, with a better raw net-R profile than donchian_breakout, ttm_squeeze_fire, or macd_trend.",
+    "The base signal is mechanically clean: trend state plus directional-strength confirmation. That is a better substrate for a profitability gate than a vague all-bars direction model.",
+    "The selected features answer the exact failure modes of trend-following trades: weak trend structure, fading momentum, low-quality order-flow participation, poor volatility expansion, and bad session/liquidity context.",
+    "It keeps the layered curated-feature approach from the saved FlowGate family, but applies it to the current 15m Rust backtest path instead of old 1m research labels."
+  ],
+  "label": {
+    "type": "take_trade",
+    "buffer_r": 0.3,
+    "description": "Positive class when realized net_r > 0.3R after deterministic fees and slippage."
+  },
+  "feature_layers": {
+    "trend_engine": [
+      "volatility_supertrend_long",
+      "volatility_supertrend_10_3_rel",
+      "directional_adx_14",
+      "directional_di_plus",
+      "directional_di_minus",
+      "directional_psar_trend_long",
+      "directional_vortex_vi_plus_14",
+      "directional_vortex_vi_minus_14"
+    ],
+    "trend_structure": [
+      "ema_fast_rel",
+      "ema_slow_rel",
+      "trend_ema_20_rel",
+      "trend_sma_50_rel",
+      "trend_hull_9_rel",
+      "volatility_donchian_mid_20_rel"
+    ],
+    "momentum_confirmation": [
+      "momentum_macd_hist_norm",
+      "momentum_macd_line_norm",
+      "momentum_roc_10",
+      "momentum_tsi_25_13",
+      "momentum_awesome_oscillator_5_34_norm",
+      "momentum_rsi_14"
+    ],
+    "flow_confirmation": [
+      "cvd_ema3",
+      "cvd_ema3_slope",
+      "order_flow_vwap_deviation_pct",
+      "volume_ad_line_zscore",
+      "volume_obv_zscore",
+      "volume_cmf_20"
+    ],
+    "volatility_context": [
+      "atr_pct",
+      "atr_pct_baseline",
+      "vol_ratio",
+      "volatility_bb_bandwidth_20",
+      "volatility_ttm_squeeze_on",
+      "volatility_keltner_upper_20_rel",
+      "volatility_keltner_lower_20_rel"
+    ],
+    "execution_context": [
+      "order_flow_in_us_session",
+      "order_flow_in_eu_session",
+      "order_flow_liquidity_sweep_up",
+      "order_flow_liquidity_sweep_down",
+      "order_flow_thin_zone"
+    ]
+  }
+}

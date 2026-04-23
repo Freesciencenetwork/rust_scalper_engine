@@ -1,0 +1,6 @@
+{
+  "strategy_id": "macd_trend",
+  "feature_count": 129,
+  "trade_rows": 1788,
+  "output_rows": 1788
+}

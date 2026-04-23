@@ -1,8 +1,15 @@
 # rust_scalper_engine
 
-An HTTP server that runs closed-bar indicators and strategy evaluation over OHLCV data. Point it at a candle window, get back indicator values or a trading decision on the last bar. Supports single-bar evaluation and full replay (walk-forward over many bars).
+This README documents the **Rust HTTP `server`** (default binary): closed-bar indicators, strategy evaluation, replay, and backtest over OHLCV. JSON request and response shapes live in [`src/machine.rs`](src/machine.rs) and [`src/backtest.rs`](src/backtest.rs); routing in [`src/bin/server.rs`](src/bin/server.rs).
 
-Routes: [`src/bin/server.rs`](src/bin/server.rs) — JSON types: [`src/machine.rs`](src/machine.rs)
+Optional repo tooling (Python ML pipeline, example HTTP clients) is **not** covered here — see [`python_pipeline/README.md`](python_pipeline/README.md) and the [`examples/`](examples/) directory.
+
+---
+
+## Indicators and market data (source of truth)
+
+- **Indicators** are implemented and evaluated **only inside this server**. Callers obtain values **only through the HTTP API** (for example `GET /v1/catalog` for paths, `POST /v1/indicators/{name}` for the last bar, `POST /v1/indicators/{name}/replay` for one replay series, and `POST /v1/indicators/replay` with an `indicators` list for several at once).
+- **Bundled BTCUSD OHLCV** used by the server lives under [`src/historical_data/`](src/historical_data/) by default (e.g. `btcusd_1-min_data.csv`; the process can override the path with the `BTCUSD_1M_CSV` environment variable). You still **access that series through the API**, not by loading the CSV in parallel for engine-backed workflows: put `bundled_btcusd_1m` on `MachineRequest` / replay bodies (`from` / `to` in UTC `YYYY-MM-DD`, or `all: true`) so the server reads, caps, and optionally resamples the bundle consistently with strategies and backtests.
 
 ---
 
@@ -60,11 +67,19 @@ All `/v1/*` responses are JSON. POST bodies are capped at 10 MiB. Errors return 
 
 Replay request bodies use the same fields as `MachineRequest`, plus optional `replay_from` / `replay_to` (UTC `YYYY-MM-DD`) to narrow the walk window. When using the path-based endpoint (`/indicators/{name}/replay`), the `indicators` field in the body is ignored — the indicator is set by the URL.
 
+### Backtest (trade ledger)
+
+| Method | Path | Body | Response |
+|--------|------|------|----------|
+| `POST` | `/v1/strategies/{id}/backtest` | `StrategyBacktestRequest` | `StrategyBacktestResponse` |
+
+`StrategyBacktestRequest` flattens a `MachineRequest` (candles / `bundled_btcusd_1m` / `synthetic_series`) plus optional `from_index` / `to_index`, `replay_from` / `replay_to`, and `execution` (fees, slippage, `max_hold_bars`, etc. — see `src/backtest.rs`).
+
 ---
 
 ## Smoke test
 
-Requires `src/historical_data/btcusd_1-min_data.csv` (or override with the `BTCUSD_1M_CSV` environment variable).
+The server must be able to read `src/historical_data/btcusd_1-min_data.csv` (or override with the `BTCUSD_1M_CSV` environment variable when starting `cargo run`). The smoke `curl` below still goes **through the HTTP API**; the engine loads the bundled file internally when you send `bundled_btcusd_1m`.
 
 ```bash
 curl -sS http://127.0.0.1:8080/health
@@ -78,7 +93,7 @@ curl -sS -X POST 'http://127.0.0.1:8080/v1/indicators/ema_fast' \
 
 ## Integration patterns
 
-There are two ways to feed candle data to the engine.
+Each `MachineRequest` must use **exactly one** OHLCV source: non-empty `candles`, `synthetic_series`, or `bundled_btcusd_1m` (validated in `src/machine.rs`).
 
 **Diagrams:** fenced `mermaid` blocks render on the [GitHub README](https://github.com/Freesciencenetwork/rust_scalper_engine/blob/main/README.md). For local Markdown preview in Cursor or VS Code, enable Mermaid (for example the **Markdown Preview Mermaid Support** extension). Plain `text` blocks below are the same flow in ASCII.
 
@@ -86,7 +101,7 @@ There are two ways to feed candle data to the engine.
 
 ### Pattern 1 — bring your own candles
 
-Load bars in your own process (from a CSV, database, or exchange API) and include them in the request body as a `candles` array. Do not mix `candles` with `bundled_btcusd_1m` in the same request.
+Your HTTP client supplies `candles` (oldest first). Do not mix `candles` with `bundled_btcusd_1m` or `synthetic_series` in the same request.
 
 ```mermaid
 sequenceDiagram
@@ -114,74 +129,21 @@ sequenceDiagram
 
 Each candle object must have: `close_time` (ms UTC), `open`, `high`, `low`, `close`, `volume`.
 
-```python
-import csv, json, os, urllib.request as u
-from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
+Minimal `curl` (two bars); for real windows use a JSON file and `curl ... -d @payload.json`.
 
-ENGINE   = os.environ.get("ENGINE_URL", "http://127.0.0.1:8080").rstrip("/")
-csv_path = Path(os.environ.get("BTCUSD_1M_CSV", "src/historical_data/btcusd_1-min_data.csv"))
-
-
-def utc_range_ms(day_from: str, day_to_inclusive: str) -> tuple[int, int]:
-    lo  = date.fromisoformat(day_from)
-    hi  = date.fromisoformat(day_to_inclusive) + timedelta(days=1)
-    return (
-        int(datetime(lo.year, lo.month, lo.day, tzinfo=timezone.utc).timestamp() * 1000),
-        int(datetime(hi.year, hi.month, hi.day, tzinfo=timezone.utc).timestamp() * 1000),
-    )
-
-
-def load_btcusd_1m_candles(path: Path, day_from: str, day_to: str) -> list[dict]:
-    lo_ms, hi_ms = utc_range_ms(day_from, day_to)
-    out: list[dict] = []
-    with path.open(newline="") as f:
-        r = csv.reader(f)
-        header = next(r, None)
-        if not header or "timestamp" not in ",".join(h.lower() for h in header):
-            raise SystemExit("expected a Timestamp,Open,High,Low,Close,Volume header")
-        for row in r:
-            if not row or len(row) < 6:
-                continue
-            ts_ms = int(float(row[0]) * 1000)
-            if ts_ms < lo_ms or ts_ms >= hi_ms:
-                continue
-            o, h, low, c, v = map(float, row[1:6])
-            out.append({"close_time": ts_ms, "open": o, "high": h, "low": low, "close": c, "volume": v})
-    return out
-
-
-candles = load_btcusd_1m_candles(csv_path, "2012-01-02", "2012-01-02")
-print(f"loaded {len(candles)} bars")
-
-body = {"bar_interval": "1m", "candles": candles}
-
-# Indicator on the last bar
-req = u.Request(
-    f"{ENGINE}/v1/indicators/ema_fast",
-    data=json.dumps(body).encode(),
-    headers={"Content-Type": "application/json; charset=utf-8"},
-    method="POST",
-)
-resp = json.loads(u.urlopen(req, timeout=120).read().decode())
-print(f"last close={candles[-1]['close']}  ema_fast={resp['value']}")
-
-# Strategy decision on the last bar
-req_s = u.Request(
-    f"{ENGINE}/v1/strategies/default",
-    data=json.dumps(body).encode(),
-    headers={"Content-Type": "application/json; charset=utf-8"},
-    method="POST",
-)
-strat = json.loads(u.urlopen(req_s, timeout=120).read().decode())
-print("strategy_id:", strat["strategy_id"], "  allowed:", strat["decision"]["allowed"])
+```bash
+curl -sS -X POST 'http://127.0.0.1:8080/v1/indicators/ema_fast' \
+  -H 'Content-Type: application/json' \
+  -d '{"bar_interval":"1m","candles":[{"close_time":1700000000000,"open":1,"high":1.1,"low":0.9,"close":1.0,"volume":10},{"close_time":1700000060000,"open":1,"high":1.05,"low":0.95,"close":1.02,"volume":11}]}'
 ```
+
+For bundled CSV slices without building `candles` yourself, use Pattern 2. For deterministic demo bars without an external file, the server also supports `synthetic_series` (see `SyntheticSeries` in `src/machine.rs`). Example HTTP clients under [`examples/`](examples/) build larger payloads.
 
 ---
 
 ### Pattern 2 — bundled replay (server reads the CSV)
 
-Use this when you want the server to walk forward through the bundled CSV and return a result for every bar in one response. The server builds the dataset once internally and emits a `steps` array.
+The server walks the bundled file under `src/historical_data/` (see above) and returns `steps` for each bar. Trigger it only via JSON (`bundled_btcusd_1m`); the server reads the CSV internally.
 
 ```mermaid
 sequenceDiagram
@@ -209,62 +171,45 @@ sequenceDiagram
     |<- steps JSON ------|                    |
 ```
 
-Set `bundled_btcusd_1m.from` / `to` to UTC `YYYY-MM-DD` to define the loaded slice. Add `replay_from` / `replay_to` if you want to narrow the walk further within that slice.
+Set `bundled_btcusd_1m.from` / `to` to UTC `YYYY-MM-DD` for the loaded slice. Add `replay_from` / `replay_to` to narrow the walk inside that slice. Each `steps[i]` has `bar_index`, `close_time` (ms UTC), and `indicators["<path>"]` — no OHLC in the replay payload.
 
-Each `steps[i]` entry contains `bar_index`, `close_time` (ms UTC), and `indicators["<path>"]`. OHLC prices are not included in the replay payload — join to your own store by time or index if you need them.
+Single indicator:
 
-```python
-import json, os, urllib.request as u
-
-ENGINE = os.environ.get("ENGINE_URL", "http://127.0.0.1:8080").rstrip("/")
-
-body = {
-    "bar_interval": "1m",
-    "bundled_btcusd_1m": {"from": "2012-01-02", "to": "2012-01-02"},
-}
-req = u.Request(
-    f"{ENGINE}/v1/indicators/ema_fast/replay",
-    data=json.dumps(body).encode(),
-    headers={"Content-Type": "application/json; charset=utf-8"},
-    method="POST",
-)
-resp = json.loads(u.urlopen(req, timeout=120).read().decode())
-print(len(resp["steps"]), "replay steps")
+```bash
+curl -sS -X POST 'http://127.0.0.1:8080/v1/indicators/ema_fast/replay' \
+  -H 'Content-Type: application/json' \
+  -d '{"bar_interval":"1m","bundled_btcusd_1m":{"from":"2012-01-02","to":"2012-01-02"}}'
 ```
 
-To evaluate multiple indicators in one request, use `POST /v1/indicators/replay` with an `indicators` list:
+Several indicators in one POST:
 
-```python
-body["indicators"] = ["ema_fast", "atr"]
-# POST to /v1/indicators/replay instead of /v1/indicators/ema_fast/replay
+```bash
+curl -sS -X POST 'http://127.0.0.1:8080/v1/indicators/replay' \
+  -H 'Content-Type: application/json' \
+  -d '{"bar_interval":"1m","bundled_btcusd_1m":{"from":"2012-01-02","to":"2012-01-02"},"indicators":["ema_fast","atr"]}'
 ```
 
 ---
 
-### Pattern 3 — full backtest (`all: true`)
+### Pattern 3 — bundled full slice (`all: true`)
 
-Set `bundled_btcusd_1m.all` to `true` to load the entire CSV and replay from the first bar to the last. Useful for a one-shot linear backtest without specifying date ranges.
+`bundled_btcusd_1m.all: true` loads from the start of the CSV through the row cap (see `src/historical_data/mod.rs`). Do not set `from` / `to` when `all` is true. Use a long client timeout.
 
-```python
-import json, os, urllib.request as u
-
-ENGINE = os.environ.get("ENGINE_URL", "http://127.0.0.1:8080").rstrip("/")
-
-body = {
-    "bar_interval": "1m",
-    "bundled_btcusd_1m": {"all": True},
-}
-req = u.Request(
-    f"{ENGINE}/v1/indicators/ema_fast/replay",
-    data=json.dumps(body).encode(),
-    headers={"Content-Type": "application/json; charset=utf-8"},
-    method="POST",
-)
-print(u.urlopen(req, timeout=600).read().decode())
+```bash
+curl -sS --max-time 600 -X POST 'http://127.0.0.1:8080/v1/indicators/ema_fast/replay' \
+  -H 'Content-Type: application/json' \
+  -d '{"bar_interval":"1m","bundled_btcusd_1m":{"all":true}}'
 ```
 
-Do not set `from` or `to` when `all` is `true`.
+**Limits:** at most **500,000** rows loaded from the CSV; replay responses cap around **50,000** steps with server-side subsampling on longer walks (`src/machine.rs`).
 
-**Limits:** `all: true` loads at most 500,000 rows from the start of the CSV. Longer files are truncated (see `src/historical_data/mod.rs`). Replay payloads are capped at ~50,000 steps; longer walks are subsampled server-side (see `src/machine.rs`).
+Use `POST /v1/strategies/replay` with the same `MachineRequest` fields to replay strategy decisions instead of indicators.
 
-Use `POST /v1/strategies/replay` with the same body shape to walk the strategy instead of indicators.
+---
+
+## Repo map (outside this README)
+
+| Path | Contents |
+|------|----------|
+| [`python_pipeline/README.md`](python_pipeline/README.md) | Optional Python ML / profitability workflow (calls this server over HTTP). |
+| [`examples/`](examples/) | Example HTTP clients (`simple_post.py`, `engine_http_client.py`, …). |

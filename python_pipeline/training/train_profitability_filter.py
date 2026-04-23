@@ -1,5 +1,5 @@
 """
-train_profitability.py — Walk-forward profitability filter on exported trade ledgers.
+train_profitability_filter.py — Walk-forward profitability filter on exported trade ledgers.
 
 Label:
   take_trade = 1 if net_r > PROFITABILITY_BUFFER_R else 0
@@ -14,14 +14,15 @@ import json
 import logging
 import os
 import sys
+import shutil
 
 import numpy as np
 import pandas as pd
 from lightgbm import LGBMClassifier, early_stopping, log_evaluation
 from sklearn.metrics import matthews_corrcoef
 
-import config
-from walk_forward import expanding_window_splits, slice_fold
+from python_pipeline.shared import pipeline_config as config
+from python_pipeline.shared.walk_forward_splits import expanding_window_splits, slice_fold
 
 logging.basicConfig(
     level=logging.INFO,
@@ -73,7 +74,51 @@ def parse_args():
     parser.add_argument("--data", default=None)
     parser.add_argument("--n-folds", type=int, default=config.WF_N_FOLDS)
     parser.add_argument("--buffer-r", type=float, default=config.PROFITABILITY_BUFFER_R)
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Directory to save model artifacts. Defaults to an auto-named checkpoint folder.",
+    )
+    parser.add_argument(
+        "--strategy-spec",
+        default=None,
+        help="Path to a strategy JSON. If provided, restricts profitability features to feature_layers.",
+    )
     return parser.parse_args()
+
+
+def load_strategy(path: str):
+    with open(path) as fh:
+        return json.load(fh)
+
+
+def apply_regime_filter(df: pd.DataFrame, strategy: dict) -> pd.DataFrame:
+    rf = strategy.get("regime_filter")
+    if not rf:
+        return df
+    col = rf["column"]
+    if col not in df.columns:
+        logger.warning("Regime filter column '%s' not in data — skipping filter", col)
+        return df
+    mode = rf["mode"]
+    threshold = rf["threshold"]
+    before = len(df)
+    if mode == "gt":
+        df = df[df[col] > threshold].reset_index(drop=True)
+    elif mode == "lt":
+        df = df[df[col] < threshold].reset_index(drop=True)
+    elif mode == "abs_gt":
+        df = df[df[col].abs() > threshold].reset_index(drop=True)
+    logger.info(
+        "Regime filter '%s' %s %.4f: %d -> %d rows (%.1f%% kept)",
+        col,
+        mode,
+        threshold,
+        before,
+        len(df),
+        100 * len(df) / max(before, 1),
+    )
+    return df
 
 
 def fit_lgbm_binary(X_train, y_train, X_val, y_val):
@@ -162,9 +207,27 @@ def main():
     )
     logger.info("Loading trade ledger from %s", data_path)
     df = pd.read_parquet(data_path).sort_values("signal_close_time_ms").reset_index(drop=True)
+    strategy_spec = load_strategy(args.strategy_spec) if args.strategy_spec else None
+    if strategy_spec:
+        logger.info(
+            "Using strategy spec %s-%s from %s",
+            strategy_spec.get("name", "unknown"),
+            strategy_spec.get("version", "unknown"),
+            args.strategy_spec,
+        )
+        df = apply_regime_filter(df, strategy_spec)
     df["take_trade"] = (df["net_r"] > args.buffer_r).astype(int)
 
-    feat_cols = feature_columns(df)
+    if strategy_spec:
+        wanted = [f for layer in strategy_spec["feature_layers"].values() for f in layer]
+        feat_cols = [c for c in wanted if c in df.columns]
+        missing = [c for c in wanted if c not in df.columns]
+        if missing:
+            logger.warning("Strategy features not found in data: %s", missing)
+    else:
+        feat_cols = feature_columns(df)
+    if not feat_cols:
+        raise SystemExit("no usable feature columns selected")
     logger.info(
         "Rows=%d  Features=%d  Positive labels=%d (%.1f%%)  Buffer=%.2fR",
         len(df),
@@ -210,6 +273,7 @@ def main():
 
     summary = {
         "strategy": args.strategy,
+        "strategy_spec": args.strategy_spec,
         "buffer_r": args.buffer_r,
         "rows": len(df),
         "feature_count": len(feat_cols),
@@ -240,23 +304,29 @@ def main():
         X_full[:-val_size], y_full[:-val_size], X_full[-val_size:], y_full[-val_size:]
     )
 
-    date_tag = dt.datetime.utcnow().strftime("%Y%m%d")
-    metric_tag = f"exp{summary['filtered_expectancy_r_mean']:+.3f}".replace("+", "p").replace(
-        "-", "m"
-    )
-    ckpt_dir = os.path.join(
-        config.MODELS_DIR,
-        "checkpoints",
-        f"btc_1m_profitability_{args.strategy}_lgbm_{metric_tag}_{date_tag}",
-    )
+    if args.output_dir:
+        ckpt_dir = os.path.abspath(args.output_dir)
+    else:
+        date_tag = dt.datetime.utcnow().strftime("%Y%m%d")
+        metric_tag = f"exp{summary['filtered_expectancy_r_mean']:+.3f}".replace("+", "p").replace(
+            "-", "m"
+        )
+        ckpt_dir = os.path.join(
+            config.MODELS_DIR,
+            "checkpoints",
+            f"btc_1m_profitability_{args.strategy}_lgbm_{metric_tag}_{date_tag}",
+        )
     os.makedirs(ckpt_dir, exist_ok=True)
 
     model_path = os.path.join(ckpt_dir, "profitability_lgbm.txt")
     final_model.booster_.save_model(model_path)
+    if args.strategy_spec:
+        shutil.copyfile(args.strategy_spec, os.path.join(ckpt_dir, "strategy.json"))
     with open(os.path.join(ckpt_dir, "profitability_schema.json"), "w") as fh:
         json.dump(
             {
                 "strategy": args.strategy,
+                "strategy_spec": args.strategy_spec,
                 "buffer_r": args.buffer_r,
                 "feature_columns": feat_cols,
                 "summary": summary,

@@ -1,5 +1,5 @@
 """
-normalize_features.py — Convert raw indicator values into scale-invariant features.
+build_feature_cache.py — Convert raw indicator values into scale-invariant features.
 
 Problem with raw indicators
 ---------------------------
@@ -37,15 +37,17 @@ GROUP 6  Redundant / raw → DROP
 
 Output
 ------
-data/features_normalized.parquet
+python_pipeline/data/features_normalized.parquet
   Columns: timestamp_ms  +  <feature columns (underscore names)>
   No raw price-unit values. NaN for warm-up rows.
 """
 
+import argparse
 import json
 import logging
 import os
 import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -58,10 +60,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-IN_PATH  = "data/indicators_full.parquet"
-OUT_PATH = "data/features_normalized.parquet"
-IN_METADATA_PATH = "data/indicators_full.metadata.json"
-OUT_METADATA_PATH = "data/features_normalized.metadata.json"
+ROOT_DIR = Path(__file__).resolve().parents[1]
+DATA_DIR = ROOT_DIR / "data"
+
+IN_PATH = str(DATA_DIR / "indicators_full.parquet")
+OUT_PATH = str(DATA_DIR / "features_normalized.parquet")
+IN_METADATA_PATH = str(DATA_DIR / "indicators_full.metadata.json")
+OUT_METADATA_PATH = str(DATA_DIR / "features_normalized.metadata.json")
 
 # ── Column name helper ────────────────────────────────────────────────────────
 
@@ -294,18 +299,30 @@ def feature_columns(df: pd.DataFrame) -> list:
 
 
 def main():
-    logger.info("Loading %s ...", IN_PATH)
-    raw = pd.read_parquet(IN_PATH)
+    parser = argparse.ArgumentParser(description="Normalize Rust indicator parquet into ML features")
+    parser.add_argument("--in", dest="in_path", default=IN_PATH)
+    parser.add_argument("--out", dest="out_path", default=OUT_PATH)
+    parser.add_argument("--in-metadata", dest="in_metadata_path", default=None)
+    parser.add_argument("--out-metadata", dest="out_metadata_path", default=None)
+    args = parser.parse_args()
+
+    in_path = args.in_path
+    out_path = args.out_path
+    in_metadata_path = args.in_metadata_path or os.path.splitext(in_path)[0] + ".metadata.json"
+    out_metadata_path = args.out_metadata_path or os.path.splitext(out_path)[0] + ".metadata.json"
+
+    logger.info("Loading %s ...", in_path)
+    raw = pd.read_parquet(in_path)
     logger.info("Raw shape: %s", raw.shape)
 
-    if not os.path.exists(IN_METADATA_PATH):
+    if not os.path.exists(in_metadata_path):
         raise FileNotFoundError(
-            f"Missing Rust feature metadata: {IN_METADATA_PATH}. Run fetch_indicators.py first."
+            f"Missing Rust feature metadata: {in_metadata_path}. Run collect_indicators.py first."
         )
-    with open(IN_METADATA_PATH) as fh:
+    with open(in_metadata_path) as fh:
         raw_metadata = json.load(fh)
     if raw_metadata.get("source") != "rust_backend":
-        raise ValueError(f"{IN_METADATA_PATH} is not marked as rust_backend source.")
+        raise ValueError(f"{in_metadata_path} is not marked as rust_backend source.")
 
     logger.info("Normalizing ...")
     norm = normalize(raw)
@@ -320,23 +337,25 @@ def main():
         for col, pct in high_nan.items():
             logger.warning("  %s: %.1f%%", col, 100 * pct)
 
-    os.makedirs("data", exist_ok=True)
-    norm.to_parquet(OUT_PATH, index=False, compression="snappy")
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    norm.to_parquet(out_path, index=False, compression="snappy")
     logger.info("Saved -> %s  (%.1f MB)",
-                OUT_PATH, os.path.getsize(OUT_PATH) / 1e6)
+                out_path, os.path.getsize(out_path) / 1e6)
 
     metadata = {
         "source": "rust_backend",
         "pipeline_stage": "normalized_features",
-        "derived_from": IN_PATH,
-        "derived_from_metadata": IN_METADATA_PATH,
+        "derived_from": in_path,
+        "derived_from_metadata": in_metadata_path,
+        "bar_interval": raw_metadata.get("bar_interval"),
+        "bundled_resample_interval": raw_metadata.get("bundled_resample_interval"),
         "rows": int(len(norm)),
         "columns": list(norm.columns),
         "feature_count": n_features,
     }
-    with open(OUT_METADATA_PATH, "w") as fh:
+    with open(out_metadata_path, "w") as fh:
         json.dump(metadata, fh, indent=2)
-    logger.info("Saved metadata -> %s", OUT_METADATA_PATH)
+    logger.info("Saved metadata -> %s", out_metadata_path)
 
     # Print feature list for reference
     logger.info("Feature columns (%d):", n_features)

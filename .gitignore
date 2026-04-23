@@ -12,3 +12,14 @@ src/historical_data/btcusd_1-min_data.csv
 src/historical_data/request.json
 src/historical_data/request.trimmed.json
 src/historical_data/request.json.partial
+
+# Large ML / run outputs (keep small JSON + README in runs/ if desired; re-track with git add -f when needed)
+python_pipeline/data/**/*.parquet
+python_pipeline/data/**/*.csv
+python_pipeline/models/**/*.parquet
+python_pipeline/models/**/*.pkl
+python_pipeline/models/**/*.joblib
+python_pipeline/models/**/*.bin
+python_pipeline/models/**/*.txt
+python_pipeline/models/**/btc_xgb.json
+python_pipeline/models/**/server.log

@@ -29,4 +29,4 @@ Generated 2026-04-22 10:41.  Each window = 10,000 consecutive 1m bars (~6d).  Wi
 | 4 | btc_1m_move-detect_lgbm_mcc0024_noedge_20260422 | -0.0083 | ±0.0162 | 42.7% | NO |
 
 ---
-*Run `python3 evaluate_checkpoints.py` to refresh.*
+Historical snapshot of checkpoint evaluation data.
