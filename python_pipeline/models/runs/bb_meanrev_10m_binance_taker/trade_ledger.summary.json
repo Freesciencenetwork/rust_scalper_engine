@@ -1,0 +1,8 @@
+{
+  "strategy_id": "bb_mean_reversion",
+  "feature_count": 129,
+  "trade_rows": 2220,
+  "output_rows": 2220,
+  "win_rate": 0.44504504504504505,
+  "avg_net_r": -0.18174554940611387
+}

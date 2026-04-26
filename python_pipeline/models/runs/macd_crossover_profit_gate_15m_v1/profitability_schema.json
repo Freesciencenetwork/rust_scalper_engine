@@ -1,11 +1,8 @@
 {
-  "source": "rust_backend",
-  "pipeline_stage": "normalized_features",
-  "derived_from": "data/indicators_full.parquet",
-  "derived_from_metadata": "data/indicators_full.metadata.json",
-  "rows": 43680,
-  "columns": [
-    "timestamp_ms",
+  "strategy": "macd_crossover_profit_gate_15m_v1",
+  "strategy_spec": null,
+  "buffer_r": 0.0,
+  "feature_columns": [
     "ema_fast_rel",
     "ema_slow_rel",
     "vwma_rel",
@@ -136,5 +133,83 @@
     "volatility_supertrend_long",
     "volatility_ttm_squeeze_on"
   ],
-  "feature_count": 129
+  "summary": {
+    "strategy": "macd_crossover_profit_gate_15m_v1",
+    "strategy_spec": null,
+    "label_mode": "fwd_ret_r",
+    "buffer_r": 0.0,
+    "prob_thr": 0.55,
+    "rows": 6934,
+    "feature_count": 129,
+    "mcc_mean": 0.02763069690970719,
+    "coverage_mean": 0.11562378375148004,
+    "baseline_expectancy_r_mean": -0.13499201689105586,
+    "filtered_expectancy_r_mean": 0.15261087876943313,
+    "baseline_profit_factor_mean": 0.8943965485685684,
+    "filtered_profit_factor_mean": 1.2194664534370212,
+    "baseline_max_drawdown_r_mean": 270.5026372379559,
+    "filtered_max_drawdown_r_mean": 23.735499015174998,
+    "fold_metrics": [
+      {
+        "mcc": -0.03098475633541652,
+        "coverage": 0.12987012987012986,
+        "baseline_expectancy_r": -0.08311850799013759,
+        "filtered_expectancy_r": 0.1099432994645804,
+        "baseline_profit_factor": 0.9272755746418806,
+        "filtered_profit_factor": 1.0930196695129089,
+        "baseline_max_drawdown_r": 266.02063610813144,
+        "filtered_max_drawdown_r": 32.28935487544264,
+        "baseline_count": 1155,
+        "filtered_count": 150
+      },
+      {
+        "mcc": 0.052059074262887334,
+        "coverage": 0.21731601731601732,
+        "baseline_expectancy_r": -0.3218256155522549,
+        "filtered_expectancy_r": -0.0160225831994329,
+        "baseline_profit_factor": 0.742538215736921,
+        "filtered_profit_factor": 0.9843930384649716,
+        "baseline_max_drawdown_r": 380.5040276509367,
+        "filtered_max_drawdown_r": 43.07770393496638,
+        "baseline_count": 1155,
+        "filtered_count": 251
+      },
+      {
+        "mcc": 0.0,
+        "coverage": 0.0,
+        "baseline_expectancy_r": -0.25383463434260467,
+        "filtered_expectancy_r": NaN,
+        "baseline_profit_factor": 0.817365183466912,
+        "filtered_profit_factor": NaN,
+        "baseline_max_drawdown_r": 366.6830761473041,
+        "filtered_max_drawdown_r": 0.0,
+        "baseline_count": 1155,
+        "filtered_count": 0
+      },
+      {
+        "mcc": 0.04611701289759765,
+        "coverage": 0.16277056277056276,
+        "baseline_expectancy_r": 0.09190020868290244,
+        "filtered_expectancy_r": 0.06381363913516819,
+        "baseline_profit_factor": 1.0742463057983875,
+        "filtered_profit_factor": 1.0755120374539093,
+        "baseline_max_drawdown_r": 157.87895786601715,
+        "filtered_max_drawdown_r": 31.127979692438846,
+        "baseline_count": 1155,
+        "filtered_count": 188
+      },
+      {
+        "mcc": 0.0709621537234675,
+        "coverage": 0.06816220880069025,
+        "baseline_expectancy_r": -0.10808153525318462,
+        "filtered_expectancy_r": 0.4527091596774168,
+        "baseline_profit_factor": 0.9105574631987408,
+        "filtered_profit_factor": 1.7249410683162951,
+        "baseline_max_drawdown_r": 181.4264884173903,
+        "filtered_max_drawdown_r": 12.182456573027128,
+        "baseline_count": 1159,
+        "filtered_count": 79
+      }
+    ]
+  }
 }

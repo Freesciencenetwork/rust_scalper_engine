@@ -34,7 +34,7 @@ This folder is centered on the Rust-backed profitability workflow.
 - `prompts/`
   Master AI prompt templates.
 - `models/runs/`
-  One folder per model run, including strategy, research, ledger, model, and markdown results.
+  One folder per model run, including strategy, research, ledger, model, and markdown results. See [`models/runs/README.md`](models/runs/README.md) for a cross-run status index (what has been tried, what works, what failed), and [`strategies/strategy_overview.md`](strategies/strategy_overview.md) for the consolidated “what went good / what went wrong” retrospective.
 - `data/`
   Cached parquet inputs.
 

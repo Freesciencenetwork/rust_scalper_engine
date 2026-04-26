@@ -1,0 +1,8 @@
+{
+  "strategy_id": "macd_crossover",
+  "feature_count": 129,
+  "trade_rows": 6936,
+  "output_rows": 6934,
+  "win_rate": 0.4658304498269896,
+  "avg_net_r": -0.12958782155345447
+}

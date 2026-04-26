@@ -1,0 +1,73 @@
+{
+  "strategy_id": "rsi_pullback",
+  "run_id": "rsi_pullback_profit_gate_15m_v1",
+  "timeframe": "15m",
+  "mode": "profitability_filter",
+  "label_rule": "net_r > 0",
+  "description": "RSI pullback in uptrend: EMA fast>slow, RSI dips below 40 within 3 bars then turns up (28-48 zone), ADX>18, price above SMA50. 15m BTC with Binance regular tier fees.",
+  "exit": {
+    "risk_multiple_stop": 2.0,
+    "risk_multiple_target": 3.0,
+    "max_hold_bars": 16,
+    "entry_fee_bps": 5.0,
+    "exit_fee_bps": 5.0,
+    "entry_slippage_bps": 1.0,
+    "exit_slippage_bps": 1.0
+  },
+  "feature_layers": {
+    "trend_context": [
+      "ema_fast_rel",
+      "ema_slow_rel",
+      "trend_sma_50_rel",
+      "trend_sma_200_rel",
+      "trend_ema_20_rel",
+      "trend_vwap_session_rel",
+      "trend_price_zscore_20"
+    ],
+    "momentum_pullback": [
+      "momentum_rsi_14",
+      "momentum_stoch_rsi_k",
+      "momentum_stoch_rsi_d",
+      "momentum_williams_r_14",
+      "momentum_cci_20",
+      "momentum_roc_10",
+      "momentum_cmo_14",
+      "momentum_mfi_14"
+    ],
+    "trend_strength": [
+      "directional_adx_14",
+      "directional_di_plus",
+      "directional_di_minus",
+      "directional_aroon_up_25",
+      "directional_aroon_down_25",
+      "directional_vortex_vi_plus_14",
+      "directional_vortex_vi_minus_14"
+    ],
+    "flow_confirmation": [
+      "cvd_ema3",
+      "cvd_ema3_slope",
+      "volume_obv_zscore",
+      "volume_ad_line_zscore",
+      "volume_cmf_20",
+      "order_flow_vwap_deviation_pct"
+    ],
+    "volatility_context": [
+      "atr_pct",
+      "atr_pct_baseline",
+      "vol_ratio",
+      "volatility_bb_bandwidth_20",
+      "volatility_bb_pct_b_20",
+      "volatility_keltner_upper_20_rel",
+      "volatility_keltner_lower_20_rel",
+      "volatility_ttm_squeeze_on"
+    ],
+    "execution_context": [
+      "order_flow_in_us_session",
+      "order_flow_in_eu_session",
+      "order_flow_in_asia_session",
+      "order_flow_liquidity_sweep_up",
+      "order_flow_liquidity_sweep_down",
+      "order_flow_thin_zone"
+    ]
+  }
+}

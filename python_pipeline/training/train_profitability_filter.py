@@ -52,6 +52,7 @@ EXCLUDED_COLUMNS = {
     "exit_reason",
     "gross_return_pct",
     "gross_r",
+    "fwd_ret_r",
     "fee_cost_pct",
     "slippage_cost_pct",
     "net_return_pct",
@@ -74,6 +75,22 @@ def parse_args():
     parser.add_argument("--data", default=None)
     parser.add_argument("--n-folds", type=int, default=config.WF_N_FOLDS)
     parser.add_argument("--buffer-r", type=float, default=config.PROFITABILITY_BUFFER_R)
+    parser.add_argument(
+        "--label-mode",
+        choices=("net_r", "fwd_ret_r"),
+        default="net_r",
+        help=(
+            "net_r  : label = (net_r > buffer_r). Depends on exit model in the ledger.\n"
+            "fwd_ret_r : label = (fwd_ret_r > buffer_r). Requires 'fwd_ret_r' column in "
+            "the ledger. Bypasses exit-model artifacts — recommended for filter training."
+        ),
+    )
+    parser.add_argument(
+        "--prob-thr",
+        type=float,
+        default=0.5,
+        help="Probability threshold for positive prediction (default 0.5). Higher = more selective.",
+    )
     parser.add_argument(
         "--output-dir",
         default=None,
@@ -216,7 +233,19 @@ def main():
             args.strategy_spec,
         )
         df = apply_regime_filter(df, strategy_spec)
-    df["take_trade"] = (df["net_r"] > args.buffer_r).astype(int)
+    label_col = args.label_mode
+    if label_col not in df.columns:
+        raise SystemExit(
+            f"--label-mode '{args.label_mode}' requires column '{label_col}' in ledger; "
+            f"columns present: {sorted(c for c in df.columns if not c.startswith('_'))[:20]}..."
+        )
+    df["take_trade"] = (df[label_col] > args.buffer_r).astype(int)
+    logger.info(
+        "Label: (%s > %.2f) — %d positive / %d total (%.1f%%)",
+        label_col, args.buffer_r,
+        int(df["take_trade"].sum()), len(df),
+        100.0 * df["take_trade"].mean(),
+    )
 
     if strategy_spec:
         wanted = [f for layer in strategy_spec["feature_layers"].values() for f in layer]
@@ -252,7 +281,7 @@ def main():
 
         model = fit_lgbm_binary(X_tr, y_tr, X_vl, y_vl)
         proba = model.predict_proba(X_te)[:, 1]
-        pred = (proba >= 0.5).astype(int)
+        pred = (proba >= args.prob_thr).astype(int)
         metrics = evaluate_fold(y_te, pred, net_r)
         fold_metrics.append(metrics)
         logger.info(
@@ -274,7 +303,9 @@ def main():
     summary = {
         "strategy": args.strategy,
         "strategy_spec": args.strategy_spec,
+        "label_mode": args.label_mode,
         "buffer_r": args.buffer_r,
+        "prob_thr": args.prob_thr,
         "rows": len(df),
         "feature_count": len(feat_cols),
         "mcc_mean": mean_metric("mcc"),

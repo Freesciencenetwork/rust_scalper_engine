@@ -1,0 +1,69 @@
+{
+  "name": "BbMeanReversion-ProfitGate-5m",
+  "version": "v1",
+  "mode": "profitability_filter",
+  "base_strategy_id": "bb_mean_reversion",
+  "timeframe": "5m",
+  "description": "Profitability gate for the Rust bb_mean_reversion strategy. The base strategy enters long after price touches the lower Bollinger Band, RSI turns up from oversold, and close reclaims the BB midline. This model decides whether an already-valid mean-reversion entry is worth taking after fees and slippage.",
+  "why_this_should_work": [
+    "Mean reversion on Bollinger Bands is one of the most consistently backtested profitable scalping setups across BTC and crypto markets.",
+    "The base signal is mechanically clean: lower-band touch + RSI reversal + midline reclaim. Three independent confirmations reduce noise.",
+    "5m timeframe balances signal quality with enough trades for statistical significance.",
+    "The feature layers target the specific failure modes of mean-reversion trades: trend overriding reversion, weak volume participation, overextended volatility, and poor session/liquidity context.",
+    "VWAP deviation and order flow features help distinguish genuine reversion setups from bear-flag traps where price briefly reclaims the midline before continuing down."
+  ],
+  "label": {
+    "type": "take_trade",
+    "buffer_r": 0.3,
+    "description": "Positive class when realized net_r > 0.3R after deterministic fees and slippage."
+  },
+  "feature_layers": {
+    "bb_core": [
+      "volatility_bb_pct_b_20",
+      "volatility_bb_bandwidth_20",
+      "volatility_bb_upper_20_rel",
+      "volatility_bb_lower_20_rel",
+      "volatility_bb_middle_20_rel"
+    ],
+    "mean_reversion_anchor": [
+      "trend_vwap_session_rel",
+      "order_flow_vwap_deviation_pct",
+      "trend_sma_50_rel",
+      "trend_ema_20_rel",
+      "ema_fast_rel",
+      "ema_slow_rel"
+    ],
+    "momentum_reversal": [
+      "momentum_rsi_14",
+      "momentum_stoch_rsi_k",
+      "momentum_stoch_rsi_d",
+      "momentum_cci_20",
+      "momentum_williams_r_14",
+      "momentum_roc_10"
+    ],
+    "flow_confirmation": [
+      "cvd_ema3",
+      "cvd_ema3_slope",
+      "volume_ad_line_zscore",
+      "volume_obv_zscore",
+      "volume_cmf_20",
+      "momentum_mfi_14"
+    ],
+    "volatility_context": [
+      "atr_pct",
+      "atr_pct_baseline",
+      "vol_ratio",
+      "volatility_keltner_upper_20_rel",
+      "volatility_keltner_lower_20_rel",
+      "volatility_ttm_squeeze_on"
+    ],
+    "execution_context": [
+      "order_flow_in_us_session",
+      "order_flow_in_eu_session",
+      "order_flow_in_asia_session",
+      "order_flow_liquidity_sweep_up",
+      "order_flow_liquidity_sweep_down",
+      "order_flow_thin_zone"
+    ]
+  }
+}

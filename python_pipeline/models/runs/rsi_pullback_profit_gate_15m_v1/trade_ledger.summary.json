@@ -1,0 +1,8 @@
+{
+  "strategy_id": "rsi_pullback",
+  "feature_count": 129,
+  "trade_rows": 2624,
+  "output_rows": 2623,
+  "win_rate": 0.453125,
+  "avg_net_r": -0.12147431993962828
+}
